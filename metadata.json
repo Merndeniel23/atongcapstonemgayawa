@@ -1,0 +1,6 @@
+{
+  "name": "Smart Garbage Monitoring System",
+  "description": "A high-fidelity mobile prototype for a smart waste management and monitoring system, featuring real-time bin levels and pickup scheduling.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

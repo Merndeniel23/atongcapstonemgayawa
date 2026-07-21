@@ -1,0 +1,60 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-900;
+  }
+}
+
+/* Custom Hide Scrollbar for general elements, but restore styled scrollbars for horizontal overflow */
+::-webkit-scrollbar {
+  display: none;
+}
+* {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Elegant visible horizontal scrollbar style for tables & scroll areas */
+.overflow-x-auto {
+  -ms-overflow-style: auto !important;
+  scrollbar-width: thin !important;
+  scrollbar-color: rgba(16, 185, 129, 0.3) transparent !important; /* subtle emerald-tint thumb */
+}
+
+.overflow-x-auto::-webkit-scrollbar {
+  display: block !important;
+  height: 6px !important;
+}
+
+.overflow-x-auto::-webkit-scrollbar-track {
+  background: rgba(241, 245, 249, 0.4) !important;
+  border-radius: 9999px !important;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb {
+  background: rgba(16, 185, 129, 0.4) !important; /* eye-catching green indicator */
+  border-radius: 9999px !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb:hover {
+  background: rgba(16, 185, 129, 0.6) !important;
+}
+
+/* Subtle guide indicator animation */
+@keyframes pulse-slide {
+  0%, 100% { transform: translateX(0); opacity: 0.6; }
+  50% { transform: translateX(6px); opacity: 0.9; }
+}
+
+.animate-pulse-slide {
+  animation: pulse-slide 2s ease-in-out infinite;
+}
+
