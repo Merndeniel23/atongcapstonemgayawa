@@ -6,21 +6,16 @@ import {
   X, 
   Info, 
   Camera, 
-  Image as ImageIcon, 
   Truck, 
   Play, 
   Pause, 
   Check, 
   CheckCircle2, 
   AlertTriangle, 
-  RotateCcw, 
   Compass, 
   Sliders, 
-  Eye, 
   RefreshCw, 
-  HelpCircle,
   FileCheck,
-  Flag
 } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
 
@@ -35,6 +30,7 @@ interface CommunalPoint {
   y: number;
   image: string;
   desc: string;
+  proofPhotoUrl?: string;
 }
 
 export default function MapView() {
@@ -65,7 +61,14 @@ export default function MapView() {
   const [isSimulating, setIsSimulating] = useState(false);
   const [simProgress, setSimProgress] = useState(0); // 0 to 1
   const [simSpeed, setSimSpeed] = useState<1 | 3 | 10>(3); // Multiplier
-  const [activeTarget, setActiveTarget] = useState<{ id: string | number; type: 'resident' | 'communal'; x: number; y: number; name: string } | null>(null);
+  const [activeTarget, setActiveTarget] = useState<{
+    id: string | number;
+    type: 'resident' | 'communal';
+    x: number;
+    y: number;
+    name: string;
+    purok: string;
+  } | null>(null);
   
   // Proof Photo Uploader mock state
   const [uploadedProof, setUploadedProof] = useState<string | null>(null);
@@ -151,7 +154,7 @@ export default function MapView() {
 
   // Simulation timer hook
   useEffect(() => {
-    let interval: any;
+    let interval: ReturnType<typeof setInterval> | undefined;
     if (isSimulating && activeTarget) {
       interval = setInterval(() => {
         setSimProgress(prev => {
@@ -164,7 +167,9 @@ export default function MapView() {
         });
       }, 100);
     }
-    return () => clearInterval(interval);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, [isSimulating, activeTarget, simSpeed]);
 
   // Start route towards a targeted location
@@ -174,7 +179,8 @@ export default function MapView() {
       type: loc.type,
       x: loc.x,
       y: loc.y,
-      name: loc.title
+      name: loc.title,
+      purok: loc.purok
     });
     setSimProgress(0);
     setIsSimulating(true);
@@ -222,7 +228,9 @@ export default function MapView() {
     if (!activeTarget) return 'Select a destination point to start dispatching.';
     if (simProgress === 0) return 'Preparing dispatch vehicle and crew at central Depot...';
     if (simProgress < 0.25) return 'Leaving Central Depot. Heading north-east on main boulevard.';
-    if (simProgress < 0.5) return `Entering ${activeTarget.purok} corridor. Proceeding past municipal borders.`;
+    if (simProgress < 0.5) {
+      return `Entering the ${activeTarget.purok} corridor. Continuing toward ${activeTarget.name}.`;
+    }
     if (simProgress < 0.75) return 'Slowing down near community intersections. Navigating to collection site.';
     if (simProgress < 1) return 'Approaching collection zone. Spotting garbage terminals...';
     return 'Arrived! Vehicle is parked safely. Ready to collect and verify waste.';

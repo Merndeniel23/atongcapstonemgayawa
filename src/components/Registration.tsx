@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAppState } from '../context/AppStateContext';
-import { 
+import { GoogleLogin } from '@react-oauth/google';
+import {
   User, 
   Mail, 
   Lock, 
@@ -12,9 +13,6 @@ import {
   EyeOff, 
   ShieldAlert, 
   Leaf, 
-  Truck, 
-  Award, 
-  ShieldCheck,
   CheckCircle,
   HelpCircle
 } from 'lucide-react';
@@ -191,12 +189,6 @@ export default function Registration() {
     setForgotPasswordEmail('');
   };
 
-  const fillCredentials = (emailStr: string, passStr: string) => {
-    setLoginEmail(emailStr);
-    setLoginPassword(passStr);
-    setActiveTab('login');
-    setError('');
-  };
 
   return (
     <div className="min-h-screen w-full bg-[#FAFBF9] flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8 font-sans text-stone-900 relative">
@@ -345,12 +337,54 @@ export default function Registration() {
                 </button>
               </div>
 
-              <button
-                type="submit"
-                className="w-full mt-4 py-3 bg-emerald-750 hover:bg-emerald-800 active:scale-[0.98] text-white font-extrabold uppercase text-[10px] tracking-widest rounded-2xl shadow-lg shadow-emerald-800/10 transition-all cursor-pointer border-none bg-emerald-700"
-              >
-                Authenticate & Enter Console
-              </button>
+             <>
+  <button
+    type="submit"
+    className="w-full mt-4 py-3 bg-emerald-700 hover:bg-emerald-800 active:scale-[0.98] text-white font-extrabold uppercase text-[10px] tracking-widest rounded-2xl shadow-lg shadow-emerald-800/10 transition-all cursor-pointer border-none"
+  >
+    Authenticate & Enter Console
+  </button>
+
+  <div className="flex items-center my-4">
+    <div className="flex-1 border-t border-gray-300"></div>
+    <span className="px-3 text-xs text-gray-500 font-semibold">OR</span>
+    <div className="flex-1 border-t border-gray-300"></div>
+  </div>
+
+  <div className="flex justify-center">
+    <GoogleLogin
+      onSuccess={async (credentialResponse) => {
+        try {
+          const response = await fetch('/api/auth/google', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              credential: credentialResponse.credential,
+            }),
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            setError(data.message || 'Google login failed.');
+            return;
+          }
+
+          localStorage.setItem('token', data.token);
+          setSuccessMessage('Google login successful!');
+        } catch (err) {
+          console.error(err);
+          setError('Unable to connect to the server.');
+        }
+      }}
+      onError={() => {
+        setError('Google Sign-In failed.');
+      }}
+    />
+  </div>
+</>
             </form>
           ) : (
             /* REGISTRATION SCREEN */
