@@ -107,7 +107,11 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
     const activeUser = currentUser || userProfile;
     if (activeUser) {
       setSchedLocation(activeUser.communalZone || 'Purok 4 communal zone');
-      setComplaintPhone(activeUser.phone || activeUser.contactInfo || '');
+      setComplaintPhone(
+  activeUser.phone ??
+  ('contactInfo' in activeUser ? activeUser.contactInfo : '') ??
+  ''
+);
       
       const zoneStr = activeUser.communalZone || 'Purok 4 communal zone';
       const match = zoneStr.match(/Purok\s*\d+/i);

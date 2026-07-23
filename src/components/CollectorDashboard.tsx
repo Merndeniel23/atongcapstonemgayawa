@@ -7,11 +7,24 @@ interface CollectorDashboardProps {
   setCurrentScreen: (screen: any) => void;
 }
 
+interface CommunalPoint {
+  id: number;
+  location: string;
+  bins: number;
+  urgency: string;
+  time: string;
+  collected: boolean;
+  x: number;
+  y: number;
+  image: string;
+  desc: string;
+}
+
 export default function CollectorDashboard({ setCurrentScreen }: CollectorDashboardProps) {
   const { schedules, updateScheduleStatus } = useAppState();
 
   // State to make standard communal collection points interactive and synchronized with the MapView
-  const [communalPoints, setCommunalPoints] = useState(() => {
+ const [communalPoints, setCommunalPoints] = useState<CommunalPoint[]>(() => {
     const saved = typeof window !== 'undefined' ? localStorage.getItem('sg_communal_points') : null;
     return saved ? JSON.parse(saved) : [
       { id: 1, location: 'Purok 4 - Main Road', bins: 3, urgency: 'High', time: '10m away', collected: false, x: 30, y: 40, image: 'https://media.istockphoto.com/id/1323762998/photo/garbage-crisis-in-sector-1-bucharest.jpg?s=612x612&w=0&k=20&c=dlHXHjBYWnI2KMKIoeNNfXS35LypTQ9legUOz3-Iehw=', desc: 'Located near the community basketball court.' },

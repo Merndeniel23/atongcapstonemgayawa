@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { OAuth2Client } from "google-auth-library";
+import { Resend } from "resend";
 import { db } from "../config/db.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 
@@ -10,6 +11,7 @@ const router = Router();
 
 const roles = ["admin", "resident", "collector", "purok_leader"] as const;
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 function createToken(user: { id: number; role: string; email: string }) {
   return jwt.sign(
@@ -280,6 +282,272 @@ router.get("/me", requireAuth, async (req: AuthRequest, res) => {
 
     return res.status(500).json({
       message: "Unable to load user profile.",
+    });
+  }
+});
+router.put("/update-profile", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const fullName = String(req.body.fullName || "").trim();
+    const phone = String(req.body.phone || "").trim();
+    const address = String(req.body.address || "").trim();
+
+    if (!fullName) {
+      return res.status(400).json({
+        message: "Full name is required.",
+      });
+    }
+
+    await db.execute(
+      `UPDATE users
+       SET full_name = ?, phone = ?, address = ?
+       WHERE id = ?`,
+      [fullName, phone || null, address || null, req.user!.id],
+    );
+
+    const [rows] = await db.query<any[]>(
+      `SELECT id, purok_id, full_name, email, role, phone, address, status, created_at
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [req.user!.id],
+    );
+
+    return res.json({
+      message: "Profile updated successfully.",
+      user: rows[0],
+    });
+  } catch (error) {
+    console.error("Update profile error:", error);
+
+    return res.status(500).json({
+      message: "Unable to update profile.",
+    });
+  }
+});
+
+
+router.post("/forgot-password", async (req, res) => {
+  try {
+    const email = String(req.body.email || "").trim().toLowerCase();
+
+    if (!email) {
+      return res.status(400).json({
+        message: "Email is required.",
+      });
+    }
+
+    const [rows] = await db.query<any[]>(
+      `SELECT id, full_name, email
+       FROM users
+       WHERE email = ?
+       LIMIT 1`,
+      [email],
+    );
+
+    const user = rows[0];
+
+    if (!user) {
+      return res.status(404).json({
+        message: "No account was found using that email.",
+      });
+    }
+
+    const otp = String(crypto.randomInt(100000, 1000000));
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await db.execute(
+      `DELETE FROM password_resets
+       WHERE email = ?`,
+      [email],
+    );
+
+    await db.execute(
+      `INSERT INTO password_resets (email, otp, expires_at)
+       VALUES (?, ?, ?)`,
+      [email, otp, expiresAt],
+    );
+
+    const { error } = await resend.emails.send({
+      from: "Smart Garbage <onboarding@resend.dev>",
+      to: email,
+      subject: "Smart Garbage Password Reset OTP",
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 520px; margin: auto;">
+          <h2>Smart Garbage Password Reset</h2>
+          <p>Hello ${user.full_name},</p>
+          <p>Your 6-digit password reset OTP is:</p>
+          <div style="font-size: 32px; font-weight: bold; letter-spacing: 8px; margin: 24px 0;">
+            ${otp}
+          </div>
+          <p>This OTP will expire after 10 minutes.</p>
+          <p>If you did not request this reset, ignore this email.</p>
+        </div>
+      `,
+    });
+
+    if (error) {
+      console.error("Resend email error:", error);
+
+      await db.execute(
+        `DELETE FROM password_resets
+         WHERE email = ?`,
+        [email],
+      );
+
+      return res.status(500).json({
+        message: "Unable to send the OTP email.",
+      });
+    }
+
+    return res.json({
+      message: "OTP sent successfully. Check your email.",
+    });
+  } catch (error) {
+    console.error("Forgot password error:", error);
+
+    return res.status(500).json({
+      message: "Unable to process the password reset request.",
+    });
+  }
+});
+
+
+router.post("/verify-otp", async (req, res) => {
+  try {
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const otp = String(req.body.otp || "").trim();
+
+    if (!email || !/^\d{6}$/.test(otp)) {
+      return res.status(400).json({
+        message: "A valid email and 6-digit OTP are required.",
+      });
+    }
+
+    const [rows] = await db.query<any[]>(
+      `SELECT id, email, otp, expires_at
+       FROM password_resets
+       WHERE email = ? AND otp = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [email, otp],
+    );
+
+    const resetRequest = rows[0];
+
+    if (!resetRequest) {
+      return res.status(400).json({
+        message: "Incorrect OTP.",
+      });
+    }
+
+    if (new Date(resetRequest.expires_at).getTime() <= Date.now()) {
+      await db.execute(
+        `DELETE FROM password_resets
+         WHERE email = ?`,
+        [email],
+      );
+
+      return res.status(400).json({
+        message: "The OTP has expired. Request a new one.",
+      });
+    }
+
+    return res.json({
+      message: "OTP verified successfully.",
+    });
+  } catch (error) {
+    console.error("Verify OTP error:", error);
+
+    return res.status(500).json({
+      message: "Unable to verify the OTP.",
+    });
+  }
+});
+
+router.post("/reset-password", async (req, res) => {
+  try {
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const otp = String(req.body.otp || "").trim();
+    const newPassword = String(req.body.newPassword || "");
+
+    if (!email || !/^\d{6}$/.test(otp)) {
+      return res.status(400).json({
+        message: "A valid email and 6-digit OTP are required.",
+      });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        message: "The new password must contain at least 8 characters.",
+      });
+    }
+
+    const [resetRows] = await db.query<any[]>(
+      `SELECT id, expires_at
+       FROM password_resets
+       WHERE email = ? AND otp = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [email, otp],
+    );
+
+    const resetRequest = resetRows[0];
+
+    if (!resetRequest) {
+      return res.status(400).json({
+        message: "Incorrect OTP.",
+      });
+    }
+
+    if (new Date(resetRequest.expires_at).getTime() <= Date.now()) {
+      await db.execute(
+        `DELETE FROM password_resets
+         WHERE email = ?`,
+        [email],
+      );
+
+      return res.status(400).json({
+        message: "The OTP has expired. Request a new one.",
+      });
+    }
+
+    const [userRows] = await db.query<any[]>(
+      `SELECT id
+       FROM users
+       WHERE email = ?
+       LIMIT 1`,
+      [email],
+    );
+
+    if (!userRows[0]) {
+      return res.status(404).json({
+        message: "User account was not found.",
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+
+    await db.execute(
+      `UPDATE users
+       SET password_hash = ?
+       WHERE email = ?`,
+      [passwordHash, email],
+    );
+
+    await db.execute(
+      `DELETE FROM password_resets
+       WHERE email = ?`,
+      [email],
+    );
+
+    return res.json({
+      message: "Password reset successfully. You can now log in.",
+    });
+  } catch (error) {
+    console.error("Reset password error:", error);
+
+    return res.status(500).json({
+      message: "Unable to reset the password.",
     });
   }
 });

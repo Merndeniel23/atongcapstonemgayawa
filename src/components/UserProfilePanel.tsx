@@ -39,8 +39,16 @@ export default function UserProfilePanel() {
   const [name, setName] = useState(activeUser.name);
   const [email, setEmail] = useState(activeUser.email || '');
   const [address, setAddress] = useState(activeUser.address || '123 Purok Central');
-  const [householdId, setHouseholdId] = useState(activeUser.householdId || activeUser.id || 'HH-2026-904');
-  const [contactInfo, setContactInfo] = useState(activeUser.phone || activeUser.contactInfo || '0912345678');
+  const [householdId, setHouseholdId] = useState<string>(
+    activeUser.householdId ||
+      ('id' in activeUser ? String(activeUser.id) : '') ||
+      'HH-2026-904'
+  );
+  const [contactInfo, setContactInfo] = useState<string>(
+    ('phone' in activeUser ? activeUser.phone : '') ||
+      ('contactInfo' in activeUser ? activeUser.contactInfo : '') ||
+      '0912345678'
+  );
   const [selectedBarangay, setSelectedBarangay] = useState('Poblacion');
   const [selectedPurok, setSelectedPurok] = useState('Purok 4');
 
@@ -63,8 +71,16 @@ export default function UserProfilePanel() {
       setName(active.name);
       setEmail(active.email || 'test@household.com');
       setAddress(active.address || '123 Purok Central');
-      setHouseholdId(active.householdId || active.id || 'HH-2026-904');
-      setContactInfo(active.phone || active.contactInfo || '0912345678');
+      setHouseholdId(
+        active.householdId ||
+          ('id' in active ? String(active.id) : '') ||
+          'HH-2026-904'
+      );
+      setContactInfo(
+        ('phone' in active ? active.phone : '') ||
+          ('contactInfo' in active ? active.contactInfo : '') ||
+          '0912345678'
+      );
       setCorrectionAddress(active.address || '123 Purok Central');
       
       const rawZone = active.communalZone || 'Purok 4 communal zone';
@@ -84,37 +100,75 @@ export default function UserProfilePanel() {
     }
   }, [currentUser, userProfile]);
 
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setNotif('');
+ const handleSave = async (e: React.FormEvent) => {
+  e.preventDefault();
 
-    // Input Validation
-    if (!name.trim() || !email.trim() || !contactInfo.trim()) {
-      setError('Please fill in all required fields (Name, Email, and Mobile).');
-      return;
-    }
+  setError('');
+  setNotif('');
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email.trim())) {
-      setError('Please provide a valid email format (e.g. name@domain.com).');
-      return;
+  if (!name.trim() || !email.trim() || !contactInfo.trim()) {
+    setError('Please fill in all required fields.');
+    return;
+  }
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (!emailRegex.test(email.trim())) {
+    setError('Please provide a valid email address.');
+    return;
+  }
+
+  const token =
+    localStorage.getItem('sg_auth_token') ||
+    localStorage.getItem('auth_token') ||
+    localStorage.getItem('token');
+
+  if (!token) {
+    setError('Walay login token. Please logout ug login balik.');
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/auth/update-profile', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        fullName: name.trim(),
+        phone: contactInfo.trim(),
+        address: address.trim(),
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Unable to update profile.');
     }
 
     updateProfile({
-      name: name.trim(),
-      email: email.trim(),
-      address: address.trim(),
-      householdId: householdId.trim(),
-      contactInfo: contactInfo.trim(),
+      name: data.user.full_name,
+      email: data.user.email,
+      phone: data.user.phone || '',
+      contactInfo: data.user.phone || '',
+      address: data.user.address || '',
+      householdId: `USR-${String(data.user.id).padStart(4, '0')}`,
       communalZone: `${selectedPurok}, ${selectedBarangay}`,
-      phone: contactInfo.trim() // update phone
     });
 
-    setNotif('Profile updated successfully! Welcome back banner has been synchronized.');
-    setTimeout(() => setNotif(''), 4000);
-  };
+    setNotif('Profile updated successfully and saved to MySQL.');
 
+    setTimeout(() => setNotif(''), 4000);
+  } catch (err) {
+    setError(
+      err instanceof Error
+        ? err.message
+        : 'Unable to update profile.',
+    );
+  }
+};
   const handleCorrectionSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setCorrectionError('');

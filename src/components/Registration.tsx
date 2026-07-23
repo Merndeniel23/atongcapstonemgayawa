@@ -372,8 +372,61 @@ export default function Registration() {
             return;
           }
 
-          localStorage.setItem('token', data.token);
-          setSuccessMessage('Google login successful!');
+          localStorage.setItem("token", data.token);
+
+          const backendRole = String(data.user?.role || "resident");
+          const appRole =
+            backendRole === "purok_leader"
+              ? "leader"
+              : backendRole === "resident"
+                ? "household"
+                : backendRole;
+
+          const appUser = {
+            name: data.user?.full_name || data.user?.name || data.user?.email || "Google User",
+            email: data.user?.email || "",
+            phone: data.user?.phone || "",
+            communalZone: data.user?.purok_id
+              ? `Purok ${data.user.purok_id}`
+              : "Unassigned communal zone",
+            password: "",
+            role: appRole,
+            address: data.user?.address || "Address not yet provided",
+            householdId: data.user?.id
+              ? `USR-${String(data.user.id).padStart(4, "0")}`
+              : "USR-GOOGLE"
+          };
+
+          const startScreen =
+            appRole === "collector"
+              ? "collector-tasks"
+              : appRole === "leader"
+                ? "leader-dashboard"
+                : appRole === "admin"
+                  ? "admin-dashboard"
+                  : "dashboard";
+
+          localStorage.setItem("user", JSON.stringify(data.user));
+          localStorage.setItem("sg_current_user", JSON.stringify(appUser));
+          localStorage.setItem("sg_is_logged_in", "true");
+          localStorage.setItem("sg_user_role", appRole);
+          localStorage.setItem("sg_current_screen", startScreen);
+          localStorage.setItem(
+            "sg_user_profile",
+            JSON.stringify({
+              name: appUser.name,
+              address: appUser.address,
+              householdId: appUser.householdId,
+              contactInfo: appUser.phone,
+              communalZone: appUser.communalZone
+            })
+          );
+
+          setSuccessMessage("Google login successful! Redirecting...");
+
+          window.setTimeout(() => {
+            window.location.reload();
+          }, 300);
         } catch (err) {
           console.error(err);
           setError('Unable to connect to the server.');
