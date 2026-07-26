@@ -367,24 +367,27 @@ router.post("/forgot-password", async (req, res) => {
       [email, otp, expiresAt],
     );
 
-    const { error } = await resend.emails.send({
-      from: "Smart Garbage <onboarding@resend.dev>",
-      to: email,
-      subject: "Smart Garbage Password Reset OTP",
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 520px; margin: auto;">
-          <h2>Smart Garbage Password Reset</h2>
-          <p>Hello ${user.full_name},</p>
-          <p>Your 6-digit password reset OTP is:</p>
-          <div style="font-size: 32px; font-weight: bold; letter-spacing: 8px; margin: 24px 0;">
-            ${otp}
-          </div>
-          <p>This OTP will expire after 10 minutes.</p>
-          <p>If you did not request this reset, ignore this email.</p>
-        </div>
-      `,
-    });
+    const recipientEmail = email.trim().toLowerCase();
 
+console.log("Sending OTP to:", JSON.stringify(recipientEmail));
+
+const { error } = await resend.emails.send({
+  from: "Smart Garbage <onboarding@resend.dev>",
+  to: recipientEmail,
+  subject: "Smart Garbage Password Reset OTP",
+  html: `
+    <div style="font-family: Arial, sans-serif; max-width: 520px; margin: auto;">
+      <h2>Smart Garbage Password Reset</h2>
+      <p>Hello ${user.full_name},</p>
+      <p>Your 6-digit password reset OTP is:</p>
+      <div style="font-size: 32px; font-weight: bold; letter-spacing: 8px;">
+        ${otp}
+      </div>
+      <p>This OTP will expire after 10 minutes.</p>
+      <p>If you did not request this reset, ignore this email.</p>
+    </div>
+  `,
+});
     if (error) {
       console.error("Resend email error:", error);
 

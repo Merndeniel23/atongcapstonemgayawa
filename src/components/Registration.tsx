@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 
 export default function Registration() {
-  const { loginUser, registerUser, registeredUsers } = useAppState();
+  const { registerUser } = useAppState();
   
   // Tab state: 'login' | 'register'
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
@@ -38,11 +38,16 @@ export default function Registration() {
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
   
-  // Feedback states
   const [error, setError] = useState('');
-  const [successMessage, setSuccessMessage] = useState('');
-  const [forgotPasswordEmail, setForgotPasswordEmail] = useState('');
-  const [showForgotModal, setShowForgotModal] = useState(false);
+const [successMessage, setSuccessMessage] = useState('');
+
+const [forgotPasswordEmail, setForgotPasswordEmail] = useState('');
+const [showForgotModal, setShowForgotModal] = useState(false);
+
+const [forgotStep, setForgotStep] = useState<'email' | 'reset'>('email');
+const [forgotOtp, setForgotOtp] = useState('');
+const [newPassword, setNewPassword] = useState('');
+const [confirmNewPassword, setConfirmNewPassword] = useState('');
 
   const barangays = [
     'Pilipog',
@@ -112,21 +117,64 @@ export default function Registration() {
       sessionStorage.setItem('token', data.token);
     }
 
-    const result = loginUser(
-      loginEmail.trim(),
-      loginPassword,
-      rememberMe
+    const backendRole = String(data.user?.role || 'resident');
+
+    const appRole =
+      backendRole === 'purok_leader'
+        ? 'leader'
+        : backendRole === 'resident'
+          ? 'household'
+          : backendRole;
+
+    const appUser = {
+      name:
+        data.user?.full_name ||
+        data.user?.name ||
+        data.user?.email ||
+        'User',
+      email: data.user?.email || loginEmail.trim(),
+      phone: data.user?.phone || '',
+      communalZone: data.user?.purok_id
+        ? `Purok ${data.user.purok_id}`
+        : 'Unassigned communal zone',
+      password: '',
+      role: appRole,
+      address: data.user?.address || 'Address not yet provided',
+      householdId: data.user?.id
+        ? `USR-${String(data.user.id).padStart(4, '0')}`
+        : 'USR-0000',
+    };
+
+    const startScreen =
+      appRole === 'collector'
+        ? 'collector-tasks'
+        : appRole === 'leader'
+          ? 'leader-dashboard'
+          : appRole === 'admin'
+            ? 'admin-dashboard'
+            : 'dashboard';
+
+    localStorage.setItem('user', JSON.stringify(data.user));
+    localStorage.setItem('sg_current_user', JSON.stringify(appUser));
+    localStorage.setItem('sg_is_logged_in', 'true');
+    localStorage.setItem('sg_user_role', appRole);
+    localStorage.setItem('sg_current_screen', startScreen);
+    localStorage.setItem(
+      'sg_user_profile',
+      JSON.stringify({
+        name: appUser.name,
+        address: appUser.address,
+        householdId: appUser.householdId,
+        contactInfo: appUser.phone,
+        communalZone: appUser.communalZone,
+      })
     );
 
-    if (!result.success) {
-      setError(
-        result.error ||
-          'Database login succeeded, but the app session could not start.'
-      );
-      return;
-    }
-
     setSuccessMessage('Login successful! Entering dashboard...');
+
+    window.setTimeout(() => {
+      window.location.reload();
+    }, 300);
   } catch (error) {
     console.error(error);
     setError('Cannot connect to the server.');
@@ -171,24 +219,110 @@ export default function Registration() {
       setSuccessMessage('Account registered successfully! Redirecting...');
     }
   };
+const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
 
-  const handleForgotPasswordSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!forgotPasswordEmail.trim()) return;
-    
-    // Simulate finding user
-    const found = registeredUsers.some(u => u.email.toLowerCase() === forgotPasswordEmail.trim().toLowerCase());
-    
-    if (found) {
-      alert(`Simulation: Reset link sent successfully to ${forgotPasswordEmail}. Since this is a local sandbox environment, your password is 'password123'.`);
-    } else {
-      alert(`Simulation: That email is not registered in our local sandbox database. Try test@household.com`);
+  setError('');
+  setSuccessMessage('');
+
+  const email = forgotPasswordEmail.trim().toLowerCase();
+
+  if (!email) {
+    setError('Please enter your email.');
+    return;
+  }
+
+  if (!validateEmail(email)) {
+    setError('Please enter a valid email address.');
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      'http://localhost:3001/api/auth/forgot-password',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      setError(data.message || 'Unable to send OTP.');
+      return;
     }
-    
-    setShowForgotModal(false);
-    setForgotPasswordEmail('');
-  };
 
+    setSuccessMessage('OTP has been sent to your email.');
+    setForgotStep('reset');
+  } catch (err) {
+    console.error(err);
+    setError('Cannot connect to the server.');
+  }
+};
+
+const handleResetPasswordSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+
+  setError("");
+  setSuccessMessage("");
+
+  if (!forgotOtp.trim() || !newPassword || !confirmNewPassword) {
+    setError("Please fill in the OTP and password fields.");
+    return;
+  }
+
+  if (newPassword.length < 6) {
+    setError("New password must be at least 6 characters.");
+    return;
+  }
+
+  if (newPassword !== confirmNewPassword) {
+    setError("New passwords do not match.");
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      "http://localhost:3001/api/auth/reset-password",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: forgotPasswordEmail.trim(),
+          otp: forgotOtp.trim(),
+          newPassword,
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      setError(data.message || "Unable to reset password.");
+      return;
+    }
+
+    setSuccessMessage(
+      "Password changed successfully. You may now sign in."
+    );
+
+    setShowForgotModal(false);
+    setForgotStep("email");
+    setForgotPasswordEmail("");
+    setForgotOtp("");
+    setNewPassword("");
+    setConfirmNewPassword("");
+  } catch (err) {
+    console.error(err);
+    setError("Cannot connect to the server.");
+  }
+};
 
   return (
     <div className="min-h-screen w-full bg-[#FAFBF9] flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8 font-sans text-stone-900 relative">
@@ -354,6 +488,14 @@ export default function Registration() {
   <div className="flex justify-center">
     <GoogleLogin
       onSuccess={async (credentialResponse) => {
+        setError('');
+        setSuccessMessage('');
+
+        if (!credentialResponse.credential) {
+          setError('Google did not return a valid credential.');
+          return;
+        }
+
         try {
           const response = await fetch('/api/auth/google', {
             method: 'POST',
@@ -372,57 +514,61 @@ export default function Registration() {
             return;
           }
 
-          localStorage.setItem("token", data.token);
+          localStorage.setItem('token', data.token);
 
-          const backendRole = String(data.user?.role || "resident");
+          const backendRole = String(data.user?.role || 'resident');
           const appRole =
-            backendRole === "purok_leader"
-              ? "leader"
-              : backendRole === "resident"
-                ? "household"
+            backendRole === 'purok_leader'
+              ? 'leader'
+              : backendRole === 'resident'
+                ? 'household'
                 : backendRole;
 
           const appUser = {
-            name: data.user?.full_name || data.user?.name || data.user?.email || "Google User",
-            email: data.user?.email || "",
-            phone: data.user?.phone || "",
+            name:
+              data.user?.full_name ||
+              data.user?.name ||
+              data.user?.email ||
+              'Google User',
+            email: data.user?.email || '',
+            phone: data.user?.phone || '',
             communalZone: data.user?.purok_id
               ? `Purok ${data.user.purok_id}`
-              : "Unassigned communal zone",
-            password: "",
+              : 'Unassigned communal zone',
+            password: '',
             role: appRole,
-            address: data.user?.address || "Address not yet provided",
+            address: data.user?.address || 'Address not yet provided',
             householdId: data.user?.id
-              ? `USR-${String(data.user.id).padStart(4, "0")}`
-              : "USR-GOOGLE"
+              ? `USR-${String(data.user.id).padStart(4, '0')}`
+              : 'USR-GOOGLE',
           };
 
           const startScreen =
-            appRole === "collector"
-              ? "collector-tasks"
-              : appRole === "leader"
-                ? "leader-dashboard"
-                : appRole === "admin"
-                  ? "admin-dashboard"
-                  : "dashboard";
+            appRole === 'collector'
+              ? 'collector-tasks'
+              : appRole === 'leader'
+                ? 'leader-dashboard'
+                : appRole === 'admin'
+                  ? 'admin-dashboard'
+                  : 'dashboard';
 
-          localStorage.setItem("user", JSON.stringify(data.user));
-          localStorage.setItem("sg_current_user", JSON.stringify(appUser));
-          localStorage.setItem("sg_is_logged_in", "true");
-          localStorage.setItem("sg_user_role", appRole);
-          localStorage.setItem("sg_current_screen", startScreen);
+          localStorage.setItem('user', JSON.stringify(data.user));
+          localStorage.setItem('sg_current_user', JSON.stringify(appUser));
+          localStorage.setItem('sg_is_logged_in', 'true');
+          localStorage.setItem('sg_user_role', appRole);
+          localStorage.setItem('sg_current_screen', startScreen);
           localStorage.setItem(
-            "sg_user_profile",
+            'sg_user_profile',
             JSON.stringify({
               name: appUser.name,
               address: appUser.address,
               householdId: appUser.householdId,
               contactInfo: appUser.phone,
-              communalZone: appUser.communalZone
+              communalZone: appUser.communalZone,
             })
           );
 
-          setSuccessMessage("Google login successful! Redirecting...");
+          setSuccessMessage('Google login successful! Redirecting...');
 
           window.setTimeout(() => {
             window.location.reload();
@@ -629,36 +775,114 @@ export default function Registration() {
               <span className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-700">
                 <HelpCircle className="w-5 h-5" />
               </span>
-              <h3 className="text-sm font-black text-stone-800 uppercase tracking-tight">Forgot Password?</h3>
+              <h3 className="text-sm font-black text-stone-800 uppercase tracking-tight">
+                {forgotStep === 'email' ? 'Forgot Password?' : 'Enter OTP & New Password'}
+              </h3>
             </div>
+
             <p className="text-[11px] text-stone-500 leading-relaxed font-medium">
-              Enter your registered email address and we will provide you with options to reset your password instantly.
+              {forgotStep === 'email'
+                ? 'Enter your registered email address. We will send a six-digit OTP to your email.'
+                : `Enter the OTP sent to ${forgotPasswordEmail} and choose your new password.`}
             </p>
-            <form onSubmit={handleForgotPasswordSubmit} className="space-y-3.5">
-              <input
-                type="email"
-                required
-                placeholder="Enter your email address"
-                value={forgotPasswordEmail}
-                onChange={(e) => setForgotPasswordEmail(e.target.value)}
-                className="w-full px-4 py-3 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
-              />
-              <div className="flex gap-2.5 pt-1">
+
+            {forgotStep === 'email' ? (
+              <form onSubmit={handleForgotPasswordSubmit} className="space-y-3.5">
+                <input
+                  type="email"
+                  required
+                  placeholder="Enter your email address"
+                  value={forgotPasswordEmail}
+                  onChange={(e) => setForgotPasswordEmail(e.target.value)}
+                  className="w-full px-4 py-3 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
+                />
+
+                <div className="flex gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowForgotModal(false);
+                      setForgotPasswordEmail('');
+                      setError('');
+                      setSuccessMessage('');
+                    }}
+                    className="flex-1 py-2.5 border border-stone-200 rounded-xl text-[10px] font-extrabold text-stone-500 hover:bg-stone-50 transition-colors uppercase tracking-wider"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-[10px] font-extrabold transition-colors uppercase tracking-wider border-none cursor-pointer"
+                  >
+                    Send OTP
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleResetPasswordSubmit} className="space-y-3.5">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  required
+                  placeholder="Enter 6-digit OTP"
+                  value={forgotOtp}
+                  onChange={(e) => setForgotOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  className="w-full px-4 py-3 text-center tracking-[0.35em] bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-sm font-bold text-stone-800"
+                />
+
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  minLength={6}
+                  placeholder="New password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full px-4 py-3 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
+                />
+
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  minLength={6}
+                  placeholder="Confirm new password"
+                  value={confirmNewPassword}
+                  onChange={(e) => setConfirmNewPassword(e.target.value)}
+                  className="w-full px-4 py-3 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
+                />
+
                 <button
                   type="button"
-                  onClick={() => { setShowForgotModal(false); setForgotPasswordEmail(''); }}
-                  className="flex-1 py-2.5 border border-stone-200 rounded-xl text-[10px] font-extrabold text-stone-500 hover:bg-stone-50 transition-colors uppercase tracking-wider"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="text-[10px] font-bold text-stone-500 hover:text-stone-700"
                 >
-                  Cancel
+                  {showPassword ? 'Hide passwords' : 'Show passwords'}
                 </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-[10px] font-extrabold transition-colors uppercase tracking-wider border-none cursor-pointer"
-                >
-                  Reset Password
-                </button>
-              </div>
-            </form>
+
+                <div className="flex gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForgotStep('email');
+                      setForgotOtp('');
+                      setNewPassword('');
+                      setConfirmNewPassword('');
+                      setError('');
+                      setSuccessMessage('');
+                    }}
+                    className="flex-1 py-2.5 border border-stone-200 rounded-xl text-[10px] font-extrabold text-stone-500 hover:bg-stone-50 transition-colors uppercase tracking-wider"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-[10px] font-extrabold transition-colors uppercase tracking-wider border-none cursor-pointer"
+                  >
+                    Change Password
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
