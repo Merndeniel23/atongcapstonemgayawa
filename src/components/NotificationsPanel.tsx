@@ -20,66 +20,15 @@ import {
   Compass
 } from 'lucide-react';
 
-interface Bulletin {
-  id: string;
-  title: string;
-  priority: 'emergency' | 'schedule' | 'notice';
-  message: string;
-  audience: string;
-  author: string;
-  date: string;
-  time: string;
-  purokTarget?: string;
-  readBy: string[]; // usernames that have acknowledged it
-}
-
-const PRESET_BULLETINS: Bulletin[] = [
-  {
-    id: 'BLL-819',
-    title: 'Pre-Disaster Storm Warning: Collection Delay',
-    priority: 'emergency',
-    message: 'Due to severe weather warnings in Northern Luzon, our municipal waste hauling schedules may experience a 2-hour delay. Residents are advised to keep garbage lids locked to prevent scattering in strong winds.',
-    audience: 'Everyone (Barangay Central)',
-    author: 'Admin Central',
-    date: 'May 27, 2026',
-    time: '08:15 AM',
-    readBy: []
-  },
-  {
-    id: 'BLL-402',
-    title: 'May 2026 Clearance & Environmental Target',
-    priority: 'schedule',
-    message: 'Friendly notice to all Purok 4 residents! Contribution ledgers for May must be verified to release Cleanliness digital endorsements. Please upload GCash screenshot stamps via the Payments tab.',
-    audience: 'Purok 4 Residents Only',
-    author: 'Leader Mark',
-    date: 'May 26, 2026',
-    time: '03:45 PM',
-    purokTarget: 'Purok 4',
-    readBy: ['demo_resident']
-  },
-  {
-    id: 'BLL-311',
-    title: 'New EcoTrack Smart Bin Deployments',
-    priority: 'notice',
-    message: 'Purok Leaders have completed physical inspections of four communal garbage bins on Maple Street. Full-bin findings were forwarded to collectors for action.',
-    audience: 'Waste Collectors & Leaders',
-    author: 'Sanitation Sinks Panel',
-    date: 'May 24, 2026',
-    time: '11:00 AM',
-    readBy: []
-  }
-];
-
 interface NotificationsPanelProps {
   role: 'household' | 'collector' | 'leader' | 'admin';
 }
 
 export default function NotificationsPanel({ role }: NotificationsPanelProps) {
-  const { currentUser, userProfile } = useAppState();
+  const { currentUser, userProfile, notifications, addNotification, markNotificationRead, markAllNotificationsRead, deleteNotification } = useAppState();
   const activeUser = currentUser || userProfile;
   const username = activeUser?.name || 'demo_resident';
 
-  const [bulletins, setBulletins] = useState<Bulletin[]>([]);
   const [showCompose, setShowCompose] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'all' | 'unread' | 'emergency'>('all');
   
@@ -91,26 +40,6 @@ export default function NotificationsPanel({ role }: NotificationsPanelProps) {
   const [targetPurok, setTargetPurok] = useState('All Puroks');
   const [validationError, setValidationError] = useState('');
 
-  // Load bulletins
-  useEffect(() => {
-    const saved = localStorage.getItem('sg_municipal_bulletins');
-    if (saved) {
-      try {
-        setBulletins(JSON.parse(saved));
-      } catch (e) {
-        setBulletins(PRESET_BULLETINS);
-      }
-    } else {
-      localStorage.setItem('sg_municipal_bulletins', JSON.stringify(PRESET_BULLETINS));
-      setBulletins(PRESET_BULLETINS);
-    }
-  }, []);
-
-  const saveBulletins = (updatedList: Bulletin[]) => {
-    setBulletins(updatedList);
-    localStorage.setItem('sg_municipal_bulletins', JSON.stringify(updatedList));
-  };
-
   const handleComposeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !message.trim()) {
@@ -118,8 +47,7 @@ export default function NotificationsPanel({ role }: NotificationsPanelProps) {
       return;
     }
 
-    const newRecord: Bulletin = {
-      id: `BLL-${Math.floor(100 + Math.random() * 900)}`,
+    addNotification({
       title,
       priority,
       message,
@@ -128,13 +56,8 @@ export default function NotificationsPanel({ role }: NotificationsPanelProps) {
       date: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
       time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
       purokTarget: targetPurok === 'All Puroks' ? undefined : targetPurok,
-      readBy: []
-    };
+    });
 
-    const updated = [newRecord, ...bulletins];
-    saveBulletins(updated);
-
-    // Reset draft fields
     setTitle('');
     setMessage('');
     setValidationError('');
@@ -142,49 +65,29 @@ export default function NotificationsPanel({ role }: NotificationsPanelProps) {
   };
 
   const handleMarkAsRead = (id: string) => {
-    const updated = bulletins.map(b => {
-      if (b.id === id) {
-        const readSet = new Set(b.readBy);
-        readSet.add(username); // current logged-in resident
-        return { ...b, readBy: Array.from(readSet) };
-      }
-      return b;
-    });
-    saveBulletins(updated);
+    markNotificationRead(id, username);
   };
 
   const handleMarkAllRead = () => {
-    const updated = bulletins.map(b => {
-      const readSet = new Set(b.readBy);
-      readSet.add(username);
-      return { ...b, readBy: Array.from(readSet) };
-    });
-    saveBulletins(updated);
+    markAllNotificationsRead(username);
   };
 
   const handleDeleteBulletin = (id: string) => {
-    const updated = bulletins.filter(b => b.id !== id);
-    saveBulletins(updated);
+    deleteNotification(id);
   };
 
   // Filter criteria logic
-  const filteredBulletins = bulletins.filter(b => {
-    // If emergency filter is active
+  const filteredBulletins = notifications.filter(b => {
     if (activeFilter === 'emergency' && b.priority !== 'emergency') return false;
-    
-    // If unread filter is active
     if (activeFilter === 'unread' && b.readBy.includes(username)) return false;
 
-    // Audience isolation rules
     if (role === 'collector') {
-      // Driver sees global notices or crew-specific tags
       if (b.audience.includes('Purok') && !b.audience.includes('Collectors')) {
         return false;
       }
     }
 
     if (role === 'household') {
-      // Household Resident only sees their targeted purok values or general announcements
       if (b.purokTarget && b.purokTarget !== 'Purok 4') {
         return false;
       }
@@ -272,7 +175,7 @@ export default function NotificationsPanel({ role }: NotificationsPanelProps) {
       </div>
 
       {/* EMERGENCY HIGHLIGHT RIBBON */}
-      {bulletins.some(b => b.priority === 'emergency' && !b.readBy.includes(username)) && (
+      {notifications.some(b => b.priority === 'emergency' && !b.readBy.includes(username)) && (
         <div className="bg-gradient-to-r from-rose-500 to-red-600 rounded-[2rem] p-6 text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-lg shadow-rose-950/15">
           <div className="space-y-1.5 flex-1">
             <span className="bg-white/20 text-white font-extrabold text-[8px] uppercase tracking-widest px-2.5 py-1 rounded-md">
@@ -284,7 +187,7 @@ export default function NotificationsPanel({ role }: NotificationsPanelProps) {
           </div>
           <button
             onClick={() => {
-              const typh = bulletins.find(b => b.priority === 'emergency');
+              const typh = notifications.find(b => b.priority === 'emergency');
               if (typh) handleMarkAsRead(typh.id);
             }}
             className="px-5 py-3.5 bg-white text-rose-700 hover:bg-rose-50 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow border-none text-nowrap"

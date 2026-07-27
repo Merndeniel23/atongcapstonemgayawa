@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 ) ENGINE=InnoDB;
 `);
 
-for (let i = 1; i <= 4; i++) {
+for (let i = 1; i <= 9; i++) {
   await connection.execute(`INSERT IGNORE INTO puroks (id,name,description) VALUES (?,?,?)`, [i, `Purok ${i}`, `Assigned collection zone ${i}`]);
 }
 
