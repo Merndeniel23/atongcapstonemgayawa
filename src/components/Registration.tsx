@@ -18,7 +18,6 @@ import {
 } from 'lucide-react';
 
 export default function Registration() {
-  const { registerUser } = useAppState();
   
   // Tab state: 'login' | 'register'
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
@@ -81,44 +80,8 @@ const [confirmNewPassword, setConfirmNewPassword] = useState('');
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr);
   };
 
-  const handleLoginSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-
-  setError('');
-  setSuccessMessage('');
-
-  if (!loginEmail.trim() || !loginPassword) {
-    setError('Please fill in all credentials.');
-    return;
-  }
-
-  try {
-    const response = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        email: loginEmail.trim(),
-        password: loginPassword,
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      setError(data.message || 'Login failed.');
-      return;
-    }
-
-    if (rememberMe) {
-      localStorage.setItem('token', data.token);
-    } else {
-      sessionStorage.setItem('token', data.token);
-    }
-
-    const backendRole = String(data.user?.role || 'resident');
-
+  const completeLogin = (data: any, remember: boolean) => {
+    const backendRole = String(data?.user?.role || 'resident');
     const appRole =
       backendRole === 'purok_leader'
         ? 'leader'
@@ -126,66 +89,100 @@ const [confirmNewPassword, setConfirmNewPassword] = useState('');
           ? 'household'
           : backendRole;
 
-    const appUser = {
-      name:
-        data.user?.full_name ||
-        data.user?.name ||
-        data.user?.email ||
-        'User',
-      email: data.user?.email || loginEmail.trim(),
-      phone: data.user?.phone || '',
-      communalZone: data.user?.purok_id
-        ? `Purok ${data.user.purok_id}`
-        : 'Unassigned communal zone',
-      password: '',
-      role: appRole,
-      address: data.user?.address || 'Address not yet provided',
-      householdId: data.user?.id
-        ? `USR-${String(data.user.id).padStart(4, '0')}`
-        : 'USR-0000',
-    };
-
-    const startScreen =
-      appRole === 'collector'
-        ? 'collector-tasks'
-        : appRole === 'leader'
-          ? 'leader-dashboard'
-          : appRole === 'admin'
-            ? 'admin-dashboard'
+    const currentScreen =
+      appRole === 'admin'
+        ? 'admin-dashboard'
+        : appRole === 'collector'
+          ? 'collector-tasks'
+          : appRole === 'leader'
+            ? 'leader-dashboard'
             : 'dashboard';
 
-    localStorage.setItem('user', JSON.stringify(data.user));
+    const appUser = {
+      name: data?.user?.full_name || data?.user?.name || 'User',
+      email: data?.user?.email || '',
+      phone: data?.user?.phone || '',
+      communalZone: data?.user?.purok_id
+        ? `Purok ${data.user.purok_id}`
+        : '',
+      password: '',
+      role: appRole,
+      address: data?.user?.address || '',
+      householdId:
+        appRole === 'collector'
+          ? `COL-${data.user.id}`
+          : appRole === 'leader'
+            ? `LDR-${data.user.id}`
+            : appRole === 'admin'
+              ? `ADM-${data.user.id}`
+              : `HH-${data.user.id}`,
+    };
+
+    localStorage.setItem('token', data.token);
     localStorage.setItem('sg_current_user', JSON.stringify(appUser));
     localStorage.setItem('sg_is_logged_in', 'true');
     localStorage.setItem('sg_user_role', appRole);
-    localStorage.setItem('sg_current_screen', startScreen);
-    localStorage.setItem(
-      'sg_user_profile',
-      JSON.stringify({
-        name: appUser.name,
-        address: appUser.address,
-        householdId: appUser.householdId,
-        contactInfo: appUser.phone,
-        communalZone: appUser.communalZone,
-      })
-    );
+    localStorage.setItem('sg_current_screen', currentScreen);
 
-    setSuccessMessage('Login successful! Entering dashboard...');
+    if (!remember) {
+      sessionStorage.setItem('token', data.token);
+    }
 
-    window.setTimeout(() => {
-      window.location.reload();
-    }, 300);
-  } catch (error) {
-    console.error(error);
-    setError('Cannot connect to the server.');
-  }
-};
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+    window.location.reload();
+  };
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    setError('');
+    setSuccessMessage('');
+
+    if (!loginEmail.trim() || !loginPassword) {
+      setError('Please fill in all credentials.');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: loginEmail.trim().toLowerCase(),
+          password: loginPassword,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.message || 'Login failed.');
+        return;
+      }
+
+      setSuccessMessage('Login successful! Entering dashboard...');
+
+      window.setTimeout(() => {
+        completeLogin(data, rememberMe);
+      }, 300);
+    } catch (error) {
+      console.error('Login error:', error);
+      setError('Cannot connect to the server.');
+    }
+  };
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setSuccessMessage('');
 
-    if (!regFullName.trim() || !regEmail.trim() || !regPhone.trim() || !regPassword || !regConfirmPassword) {
+    if (
+      !regFullName.trim() ||
+      !regEmail.trim() ||
+      !regPhone.trim() ||
+      !regPassword ||
+      !regConfirmPassword
+    ) {
       setError('Please fill in all registration fields.');
       return;
     }
@@ -195,8 +192,8 @@ const [confirmNewPassword, setConfirmNewPassword] = useState('');
       return;
     }
 
-    if (regPassword.length < 6) {
-      setError('Password must be at least 6 characters.');
+    if (regPassword.length < 8) {
+      setError('Password must be at least 8 characters.');
       return;
     }
 
@@ -205,18 +202,47 @@ const [confirmNewPassword, setConfirmNewPassword] = useState('');
       return;
     }
 
-    const res = registerUser({
-      name: regFullName.trim(),
-      email: regEmail.trim(),
-      phone: regPhone.trim(),
-      communalZone: `${regPurok}, ${regBarangay}`,
-      password: regPassword
-    });
+    try {
+      const purokId = Number(regPurok.replace(/\D/g, '')) || null;
 
-    if (!res.success) {
-      setError(res.error || 'Registration failed.');
-    } else {
-      setSuccessMessage('Account registered successfully! Redirecting...');
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fullName: regFullName.trim(),
+          email: regEmail.trim().toLowerCase(),
+          password: regPassword,
+          role: 'resident',
+          purokId,
+          phone: regPhone.trim(),
+          address: `${regPurok}, ${regBarangay}`,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.message || 'Registration failed.');
+        return;
+      }
+
+      setSuccessMessage('Account registered successfully! You can now sign in.');
+
+      setRegFullName('');
+      setRegEmail('');
+      setRegPhone('');
+      setRegPassword('');
+      setRegConfirmPassword('');
+
+      window.setTimeout(() => {
+        setActiveTab('login');
+        setSuccessMessage('');
+      }, 1200);
+    } catch (error) {
+      console.error('Registration error:', error);
+      setError('Cannot connect to the server.');
     }
   };
 const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
@@ -514,64 +540,10 @@ const handleResetPasswordSubmit = async (e: React.FormEvent) => {
             return;
           }
 
-          localStorage.setItem('token', data.token);
-
-          const backendRole = String(data.user?.role || 'resident');
-          const appRole =
-            backendRole === 'purok_leader'
-              ? 'leader'
-              : backendRole === 'resident'
-                ? 'household'
-                : backendRole;
-
-          const appUser = {
-            name:
-              data.user?.full_name ||
-              data.user?.name ||
-              data.user?.email ||
-              'Google User',
-            email: data.user?.email || '',
-            phone: data.user?.phone || '',
-            communalZone: data.user?.purok_id
-              ? `Purok ${data.user.purok_id}`
-              : 'Unassigned communal zone',
-            password: '',
-            role: appRole,
-            address: data.user?.address || 'Address not yet provided',
-            householdId: data.user?.id
-              ? `USR-${String(data.user.id).padStart(4, '0')}`
-              : 'USR-GOOGLE',
-          };
-
-          const startScreen =
-            appRole === 'collector'
-              ? 'collector-tasks'
-              : appRole === 'leader'
-                ? 'leader-dashboard'
-                : appRole === 'admin'
-                  ? 'admin-dashboard'
-                  : 'dashboard';
-
-          localStorage.setItem('user', JSON.stringify(data.user));
-          localStorage.setItem('sg_current_user', JSON.stringify(appUser));
-          localStorage.setItem('sg_is_logged_in', 'true');
-          localStorage.setItem('sg_user_role', appRole);
-          localStorage.setItem('sg_current_screen', startScreen);
-          localStorage.setItem(
-            'sg_user_profile',
-            JSON.stringify({
-              name: appUser.name,
-              address: appUser.address,
-              householdId: appUser.householdId,
-              contactInfo: appUser.phone,
-              communalZone: appUser.communalZone,
-            })
-          );
-
-          setSuccessMessage('Google login successful! Redirecting...');
+          setSuccessMessage('Google login successful!');
 
           window.setTimeout(() => {
-            window.location.reload();
+            completeLogin(data, true);
           }, 300);
         } catch (err) {
           console.error(err);

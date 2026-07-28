@@ -46,14 +46,22 @@ router.post("/login", async (req, res) => {
 
     const user = rows[0];
 
-    if (
-      !user ||
-      user.status !== "active" ||
-      !(await bcrypt.compare(password, user.password_hash))
-    ) {
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       return res
         .status(401)
         .json({ message: "Incorrect email or password." });
+    }
+
+    if (user.status === "pending") {
+      return res.status(403).json({
+        message: "Your collector account is waiting for administrator approval.",
+      });
+    }
+
+    if (user.status !== "active") {
+      return res.status(403).json({
+        message: "This account is inactive. Please contact the administrator.",
+      });
     }
 
     const token = createToken(user);
@@ -79,6 +87,8 @@ router.post("/register", async (req, res) => {
     const fullName = String(req.body.fullName || "").trim();
     const email = String(req.body.email || "").trim().toLowerCase();
     const password = String(req.body.password || "");
+    const phone = String(req.body.phone || "").trim();
+    const address = String(req.body.address || "").trim();
     const role = roles.includes(req.body.role)
       ? req.body.role
       : "resident";
@@ -91,12 +101,37 @@ router.post("/register", async (req, res) => {
       });
     }
 
+    if (!phone || !address) {
+      return res.status(400).json({
+        message: "Phone number and assigned barangay/purok are required.",
+      });
+    }
+
+    let validPurokId: number | null = null;
+    if (purokId !== null) {
+      const [purokRows] = await db.query<any[]>(
+        `SELECT id FROM puroks WHERE id = ? LIMIT 1`,
+        [purokId],
+      );
+      validPurokId = purokRows[0] ? purokId : null;
+    }
+
     const hash = await bcrypt.hash(password, 12);
+    const status = role === "collector" ? "pending" : "active";
 
     const [result] = await db.execute<any>(
-      `INSERT INTO users (purok_id, full_name, email, password_hash, role)
-       VALUES (?, ?, ?, ?, ?)`,
-      [purokId, fullName, email, hash, role],
+      `INSERT INTO users (
+         purok_id,
+         full_name,
+         email,
+         password_hash,
+         role,
+         phone,
+         address,
+         status
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [validPurokId, fullName, email, hash, role, phone, address, status],
     );
 
     return res.status(201).json({
@@ -554,5 +589,131 @@ router.post("/reset-password", async (req, res) => {
     });
   }
 });
+
+/**
+ * ADMIN: Return collector registrations waiting for verification.
+ */
+router.get(
+  "/admin/pending-collectors",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    try {
+      if (req.user?.role !== "admin") {
+        return res.status(403).json({
+          message: "Administrator access is required.",
+        });
+      }
+
+      const [rows] = await db.query<any[]>(
+        `SELECT
+           id,
+           purok_id,
+           full_name,
+           email,
+           phone,
+           address,
+           status,
+           created_at
+         FROM users
+         WHERE role = 'collector'
+           AND status = 'pending'
+         ORDER BY created_at DESC, id DESC`,
+      );
+
+      return res.json({
+        collectors: rows,
+      });
+    } catch (error) {
+      console.error("Pending collectors error:", error);
+
+      return res.status(500).json({
+        message: "Unable to load pending collector registrations.",
+      });
+    }
+  },
+);
+
+/**
+ * ADMIN: Approve or reject a pending collector.
+ * Body: { action: "approve" | "reject" }
+ */
+router.patch(
+  "/admin/collectors/:id/verification",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    try {
+      if (req.user?.role !== "admin") {
+        return res.status(403).json({
+          message: "Administrator access is required.",
+        });
+      }
+
+      const collectorId = Number(req.params.id);
+      const action = String(req.body.action || "").trim().toLowerCase();
+
+      if (!Number.isInteger(collectorId) || collectorId <= 0) {
+        return res.status(400).json({
+          message: "A valid collector ID is required.",
+        });
+      }
+
+      if (action !== "approve" && action !== "reject") {
+        return res.status(400).json({
+          message: "Action must be approve or reject.",
+        });
+      }
+
+      const [rows] = await db.query<any[]>(
+        `SELECT id, full_name, email, role, status
+         FROM users
+         WHERE id = ?
+           AND role = 'collector'
+         LIMIT 1`,
+        [collectorId],
+      );
+
+      const collector = rows[0];
+
+      if (!collector) {
+        return res.status(404).json({
+          message: "Collector account was not found.",
+        });
+      }
+
+      if (collector.status !== "pending") {
+        return res.status(409).json({
+          message: "This collector registration has already been reviewed.",
+        });
+      }
+
+      const nextStatus = action === "approve" ? "active" : "inactive";
+
+      await db.execute(
+        `UPDATE users
+         SET status = ?
+         WHERE id = ?
+           AND role = 'collector'`,
+        [nextStatus, collectorId],
+      );
+
+      return res.json({
+        message:
+          action === "approve"
+            ? "Collector account approved successfully."
+            : "Collector account rejected successfully.",
+        collector: {
+          ...collector,
+          status: nextStatus,
+        },
+      });
+    } catch (error) {
+      console.error("Collector verification error:", error);
+
+      return res.status(500).json({
+        message: "Unable to review the collector registration.",
+      });
+    }
+  },
+);
 
 export default router;

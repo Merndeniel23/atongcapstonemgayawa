@@ -1,10 +1,117 @@
-import { Shield, Users, Activity, Package, Map, AlertTriangle, ArrowUpRight, CheckCircle, CreditCard } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Shield, Users, Activity, Package, Map, CheckCircle, CreditCard, LoaderCircle, XCircle } from 'lucide-react';
+
+interface PendingCollector {
+  id: number;
+  purok_id: number | null;
+  full_name: string;
+  email: string;
+  phone: string | null;
+  address: string | null;
+  status: string;
+  created_at: string;
+}
 
 interface AdminDashboardProps {
   setCurrentScreen: (screen: any) => void;
 }
 
 export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps) {
+  const [pendingCollectors, setPendingCollectors] = useState<PendingCollector[]>([]);
+  const [collectorLoading, setCollectorLoading] = useState(true);
+  const [collectorError, setCollectorError] = useState('');
+  const [collectorMessage, setCollectorMessage] = useState('');
+  const [reviewingId, setReviewingId] = useState<number | null>(null);
+
+  const loadPendingCollectors = useCallback(async () => {
+    const token =
+      localStorage.getItem('token') || sessionStorage.getItem('token') || '';
+
+    if (!token) {
+      setCollectorError('Admin session not found. Please sign in again.');
+      setCollectorLoading(false);
+      return;
+    }
+
+    try {
+      setCollectorLoading(true);
+      setCollectorError('');
+
+      const response = await fetch('/api/auth/admin/pending-collectors', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setCollectorError(data.message || 'Unable to load pending collectors.');
+        return;
+      }
+
+      setPendingCollectors(
+        Array.isArray(data.collectors) ? data.collectors : [],
+      );
+    } catch (error) {
+      console.error('Pending collector fetch error:', error);
+      setCollectorError('Cannot connect to the server.');
+    } finally {
+      setCollectorLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadPendingCollectors();
+  }, [loadPendingCollectors]);
+
+  const reviewCollector = async (
+    collectorId: number,
+    action: 'approve' | 'reject',
+  ) => {
+    const token =
+      localStorage.getItem('token') || sessionStorage.getItem('token') || '';
+
+    if (!token) {
+      setCollectorError('Admin session not found. Please sign in again.');
+      return;
+    }
+
+    try {
+      setReviewingId(collectorId);
+      setCollectorError('');
+      setCollectorMessage('');
+
+      const response = await fetch(
+        `/api/auth/admin/collectors/${collectorId}/verification`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ action }),
+        },
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setCollectorError(data.message || 'Unable to review collector.');
+        return;
+      }
+
+      setPendingCollectors((current) =>
+        current.filter((collector) => collector.id !== collectorId),
+      );
+      setCollectorMessage(data.message || 'Collector registration updated.');
+    } catch (error) {
+      console.error('Collector review error:', error);
+      setCollectorError('Cannot connect to the server.');
+    } finally {
+      setReviewingId(null);
+    }
+  };
   // Real-time local storage pull for clearance records
   const saved = typeof window !== 'undefined' ? localStorage.getItem('sg_endorsements') : null;
   const endorsements = saved ? JSON.parse(saved) : [];
@@ -17,7 +124,7 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
   const pendingPayments = payments.filter((p: any) => p.status === 'Pending Verification');
 
   const systemMetrics = [
-    { label: 'Total Users', value: '2,842', trend: '+124', icon: Users, color: 'blue' },
+    { label: 'Pending Collectors', value: String(pendingCollectors.length), trend: 'Needs Review', icon: Users, color: 'blue' },
     { label: 'Active Trucks', value: '18', trend: 'Online', icon: Activity, color: 'emerald' },
     { label: 'Waste Vol (MT)', value: '124.5', trend: '-2.4%', icon: Package, color: 'amber' },
     { label: 'Clearance Queue', value: String(pendingAdminSign.length), trend: `${totalRequests} Total`, icon: Shield, color: 'indigo' },
@@ -201,36 +308,117 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
               </button>
            </div>
 
-           <h2 className="text-xl font-black text-slate-800 px-2">High Priority Alerts</h2>
-           <div className="space-y-4">
-              {[
-                { title: 'Server Load Peak', time: '2m ago', desc: 'System resources reaching 85% capacity.', type: 'critical' },
-                { title: 'New Collector Registered', time: '15m ago', desc: 'ID: C-884 requires credential verification.', type: 'warning' },
-                { title: 'Global Schedule Update', time: '1h ago', desc: 'Quarterly route optimization complete.', type: 'success' },
-              ].map((alert, i) => (
-                <div key={i} className={`p-6 rounded-[2rem] border shadow-sm ${
-                  alert.type === 'critical' ? 'bg-rose-50/50 border-rose-100' : 
-                  alert.type === 'warning' ? 'bg-amber-50/50 border-amber-100' : 'bg-emerald-50/50 border-emerald-100'
-                }`}>
-                   <div className="flex justify-between items-start mb-2">
-                      <h4 className="font-bold text-slate-900 text-sm">{alert.title}</h4>
-                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{alert.time}</span>
-                   </div>
-                   <p className="text-[11px] text-slate-500 leading-relaxed mb-4">{alert.desc}</p>
-                   {alert.type === 'warning' && (
-                     <button className="w-full bg-amber-500 text-white py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-amber-500/20 active:scale-95 transition-all">
-                       Verify Now
-                     </button>
-                   )}
-                   {alert.type === 'success' && (
-                     <div className="flex items-center gap-2 text-emerald-600 font-bold text-[10px]">
-                        <CheckCircle className="w-3 h-3" />
-                        System Optimized
-                     </div>
-                   )}
-                </div>
-              ))}
+           <div className="flex items-center justify-between px-2">
+              <h2 className="text-xl font-black text-slate-800">Collector Verification</h2>
+              <button
+                type="button"
+                onClick={() => void loadPendingCollectors()}
+                className="text-[10px] font-black uppercase tracking-wider text-emerald-600 hover:text-emerald-700"
+              >
+                Refresh
+              </button>
            </div>
+
+           {collectorError && (
+             <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-[11px] font-bold text-rose-700">
+               {collectorError}
+             </div>
+           )}
+
+           {collectorMessage && (
+             <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-[11px] font-bold text-emerald-700">
+               {collectorMessage}
+             </div>
+           )}
+
+           {collectorLoading ? (
+             <div className="flex items-center justify-center gap-2 rounded-[2rem] border border-slate-100 bg-white p-6 text-slate-500 shadow-sm">
+               <LoaderCircle className="h-4 w-4 animate-spin" />
+               <span className="text-[11px] font-bold">Loading registrations...</span>
+             </div>
+           ) : pendingCollectors.length === 0 ? (
+             <div className="rounded-[2rem] border border-emerald-100 bg-emerald-50/60 p-6 shadow-sm">
+               <div className="flex items-center gap-2 text-emerald-700">
+                 <CheckCircle className="h-4 w-4" />
+                 <span className="text-xs font-black">
+                   No pending collector registrations
+                 </span>
+               </div>
+             </div>
+           ) : (
+             <div className="space-y-4">
+               {pendingCollectors.map((collector) => {
+                 const isReviewing = reviewingId === collector.id;
+
+                 return (
+                   <div
+                     key={collector.id}
+                     className="rounded-[2rem] border border-amber-100 bg-amber-50/50 p-6 shadow-sm"
+                   >
+                     <div className="mb-3 flex items-start justify-between gap-3">
+                       <div className="min-w-0">
+                         <h4 className="truncate text-sm font-black text-slate-900">
+                           {collector.full_name}
+                         </h4>
+                         <p className="mt-1 truncate text-[10px] font-semibold text-slate-500">
+                           {collector.email}
+                         </p>
+                       </div>
+                       <span className="rounded-lg bg-amber-100 px-2 py-1 text-[8px] font-black uppercase tracking-wider text-amber-700">
+                         Pending
+                       </span>
+                     </div>
+
+                     <div className="mb-4 space-y-1 text-[10px] text-slate-500">
+                       <p>
+                         Collector ID:{' '}
+                         <span className="font-mono font-bold">
+                           C-{String(collector.id).padStart(3, '0')}
+                         </span>
+                       </p>
+                       <p>
+                         Purok:{' '}
+                         {collector.purok_id
+                           ? `Purok ${collector.purok_id}`
+                           : 'Not assigned'}
+                       </p>
+                       <p>Phone: {collector.phone || 'Not provided'}</p>
+                     </div>
+
+                     <div className="grid grid-cols-2 gap-2">
+                       <button
+                         type="button"
+                         disabled={isReviewing}
+                         onClick={() =>
+                           void reviewCollector(collector.id, 'reject')
+                         }
+                         className="flex items-center justify-center gap-1 rounded-xl border border-rose-200 bg-white py-2 text-[9px] font-black uppercase tracking-wider text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                       >
+                         <XCircle className="h-3 w-3" />
+                         Reject
+                       </button>
+
+                       <button
+                         type="button"
+                         disabled={isReviewing}
+                         onClick={() =>
+                           void reviewCollector(collector.id, 'approve')
+                         }
+                         className="flex items-center justify-center gap-1 rounded-xl bg-amber-500 py-2 text-[9px] font-black uppercase tracking-wider text-white transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-60"
+                       >
+                         {isReviewing ? (
+                           <LoaderCircle className="h-3 w-3 animate-spin" />
+                         ) : (
+                           <CheckCircle className="h-3 w-3" />
+                         )}
+                         Approve
+                       </button>
+                     </div>
+                   </div>
+                 );
+               })}
+             </div>
+           )}
         </div>
       </div>
     </div>

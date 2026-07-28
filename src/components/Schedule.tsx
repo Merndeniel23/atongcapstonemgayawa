@@ -1,4 +1,4 @@
-import { Calendar as CalendarIcon, Clock, ChevronRight, Truck, Camera, X, Image as ImageIcon, BellRing, Sparkles } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, ChevronRight, Truck, Camera, X } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
 import { useState } from 'react';
 
@@ -8,33 +8,16 @@ export default function Schedule() {
     userRole, 
     currentUser, 
     userProfile,
-    automatedRemindersEnabled,
-    setAutomatedRemindersEnabled,
-    pushNotificationChannel,
-    setPushNotificationChannel,
-    triggerAutomatedReminder
+    updateScheduleStatus,
+    setCurrentScreen
   } = useAppState();
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
-  const [simulationFeedback, setSimulationFeedback] = useState<string | null>(null);
+  const [selectedSchedule, setSelectedSchedule] = useState<any>(null);
 
   const activeUser = currentUser || userProfile;
   const displayZone = activeUser?.communalZone || 'Purok 4 communal zone';
 
   const schedulesToDisplay = schedules;
-
-  const handleSimulateReminder = () => {
-    // Find the nearest upcoming schedule
-    const nearestUpcoming = schedulesToDisplay.find(s => s.status !== 'Completed') || schedulesToDisplay[0];
-    
-    if (nearestUpcoming) {
-      triggerAutomatedReminder(nearestUpcoming);
-      setSimulationFeedback(`Simulated 1-Hour Warning for "${nearestUpcoming.type}"!`);
-      setTimeout(() => setSimulationFeedback(null), 5000);
-    } else {
-      setSimulationFeedback('No active schedules found to simulate reminders!');
-      setTimeout(() => setSimulationFeedback(null), 5000);
-    }
-  };
 
   return (
     <div className="space-y-6 pb-20">
@@ -43,96 +26,6 @@ export default function Schedule() {
         <p className="text-slate-500 text-sm">Monitor garbage collection timelines and photo verifications</p>
       </header>
 
-      {/* Automated 1-Hour Prior Push Notification Reminders Settings Card */}
-      <div className="bg-gradient-to-br from-emerald-900 to-emerald-950 text-white rounded-[2.2rem] p-6 md:p-8 shadow-xl border border-emerald-950 space-y-6 relative overflow-hidden mb-6">
-        <div className="absolute right-0 top-0 -mt-6 -mr-6 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none"></div>
-        
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-5">
-          <div className="flex items-start gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0 text-emerald-300">
-              <BellRing className="w-6 h-6 animate-pulse" />
-            </div>
-            <div>
-              <span className="text-[9px] font-black text-emerald-400 uppercase tracking-[0.25em] block mb-0.5">Automated Despatch</span>
-              <h2 className="text-lg font-black text-white tracking-tight leading-tight">1-Hour Pickup Reminders</h2>
-              <p className="text-[11px] text-emerald-200/80 font-medium mt-1 leading-relaxed max-w-md">
-                Sends automatic push notifications and logs a warning 1 hour before scheduled collections start in your Purok communal zone.
-              </p>
-            </div>
-          </div>
-          
-          {/* Toggle Switch */}
-          <div className="flex items-center gap-3 bg-emerald-950/40 p-2.5 rounded-2xl border border-white/5 w-fit shrink-0">
-            <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400">
-              {automatedRemindersEnabled ? 'ACTIVE' : 'DISABLED'}
-            </span>
-            <button
-              type="button"
-              onClick={() => setAutomatedRemindersEnabled(!automatedRemindersEnabled)}
-              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                automatedRemindersEnabled ? 'bg-emerald-500' : 'bg-slate-700'
-              }`}
-            >
-              <span
-                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                  automatedRemindersEnabled ? 'translate-x-5' : 'translate-x-0'
-                }`}
-              />
-            </button>
-          </div>
-        </div>
-
-        {automatedRemindersEnabled && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-1">
-            {/* Delivery Channel Selection */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-emerald-300 block">
-                Notification Channel
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { id: 'both', label: 'All Modes' },
-                  { id: 'in_app', label: 'In-App Only' },
-                  { id: 'browser', label: 'Web Push' }
-                ].map(ch => (
-                  <button
-                    key={ch.id}
-                    onClick={() => setPushNotificationChannel(ch.id as any)}
-                    className={`py-2 px-3 rounded-xl text-[10px] font-bold border transition-all cursor-pointer ${
-                      pushNotificationChannel === ch.id 
-                        ? 'bg-emerald-500 border-emerald-400 text-white font-black shadow-md' 
-                        : 'bg-emerald-950/50 border-white/10 text-emerald-200 hover:bg-emerald-900/40'
-                    }`}
-                  >
-                    {ch.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Tester Simulator button */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-emerald-300 block">
-                Demonstration & Verification
-              </label>
-              <div className="relative">
-                <button
-                  onClick={handleSimulateReminder}
-                  className="w-full py-2.5 bg-white/10 hover:bg-white/15 border border-white/10 hover:border-white/20 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-                  Simulate 1-Hour Prior Alert
-                </button>
-                {simulationFeedback && (
-                  <div className="absolute top-full left-0 right-0 mt-1.5 bg-emerald-500/20 border border-emerald-500/30 rounded-lg p-2 text-center text-[10px] text-emerald-300 font-bold animate-pulse">
-                    {simulationFeedback}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
 
       {/* Mini Calendar Mock */}
       <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm overflow-hidden mb-6">
@@ -173,7 +66,11 @@ export default function Schedule() {
 
         <div className="space-y-3">
           {schedulesToDisplay.map((item) => (
-            <div key={item.id} className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 group hover:border-emerald-200 transition-colors">
+            <div
+              key={item.id}
+              onClick={() => setSelectedSchedule(item)}
+              className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 group hover:border-emerald-200 transition-colors cursor-pointer"
+            >
               <div className="flex items-start gap-4">
                 <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
                   item.status === 'Completed' ? 'bg-emerald-50 text-emerald-600' :
@@ -194,7 +91,6 @@ export default function Schedule() {
                   <h4 className="font-bold text-slate-900 text-sm">{item.date}</h4>
                   <p className="text-[10px] text-slate-500">{item.time} • <span className="font-bold text-slate-400">{item.location}</span></p>
                   
-                  {/* Photo Proof preview container */}
                   {item.proofPhotoUrl && (
                     <div className="mt-3.5 flex items-center gap-3 bg-slate-50 p-2.5 rounded-2xl border border-slate-100 w-fit">
                       <div className="relative w-12 h-12 rounded-xl overflow-hidden shadow-inner border border-slate-200 shrink-0">
@@ -208,7 +104,7 @@ export default function Schedule() {
                       <div className="text-left">
                         <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Collector Verification</p>
                         <button 
-                          onClick={() => setSelectedPhoto(item.proofPhotoUrl || null)}
+                          onClick={(e) => { e.stopPropagation(); setSelectedPhoto(item.proofPhotoUrl || null); }}
                           className="text-[11px] font-extrabold text-emerald-700 hover:text-emerald-800 hover:underline flex items-center gap-1 cursor-pointer border-none bg-transparent"
                         >
                           <Camera className="w-3.5 h-3.5" />
@@ -279,6 +175,109 @@ export default function Schedule() {
               </div>
               <div className="p-3.5 bg-emerald-50 rounded-2xl border border-emerald-100 text-emerald-800 text-xs font-medium leading-relaxed">
                 <strong>Status: Verified & Audited</strong>. This image was geo-tagged and timestamped instantly when Carlos arrived at the target point coordinates.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule detail modal */}
+      {selectedSchedule && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2.5rem] p-6 max-w-2xl w-full shadow-2xl border border-slate-150 relative">
+            <button 
+              onClick={() => setSelectedSchedule(null)}
+              className="absolute top-5 right-5 p-2 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-500 hover:text-slate-800 transition-colors border-none cursor-pointer"
+            >
+              <X className="w-4.5 h-4.5" />
+            </button>
+            <div className="space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.4em] font-black text-emerald-500">Schedule Detail</p>
+                  <h3 className="text-2xl font-black text-slate-900 mt-2">{selectedSchedule.type}</h3>
+                  <p className="text-sm text-slate-500 mt-1">Detailed information for the selected pickup timeline item.</p>
+                </div>
+                <span className={`px-3 py-2 rounded-full text-[10px] font-bold uppercase tracking-[0.2em] ${
+                  selectedSchedule.status === 'Completed' ? 'bg-emerald-50 text-emerald-700' :
+                  selectedSchedule.status === 'Confirmed' || selectedSchedule.status === 'Upcoming' ? 'bg-emerald-500 text-white' :
+                  selectedSchedule.status === 'Pending' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'
+                }`}>
+                  {selectedSchedule.status}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-slate-50 p-4 rounded-3xl border border-slate-100">
+                  <p className="text-[10px] uppercase tracking-[0.4em] text-slate-400 font-black mb-3">Schedule</p>
+                  <p className="text-sm font-bold text-slate-900">{selectedSchedule.date}</p>
+                  <p className="text-sm text-slate-500">{selectedSchedule.time}</p>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-3xl border border-slate-100">
+                  <p className="text-[10px] uppercase tracking-[0.4em] text-slate-400 font-black mb-3">Location</p>
+                  <p className="text-sm font-bold text-slate-900">{selectedSchedule.location}</p>
+                  <p className="text-sm text-slate-500">{displayZone}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-emerald-50 p-4 rounded-3xl border border-emerald-100">
+                  <p className="text-[10px] uppercase tracking-[0.4em] text-emerald-700 font-black mb-3">Audience</p>
+                  <p className="text-sm font-bold text-emerald-900">{userRole === 'collector' ? 'Collector Team' : userRole === 'leader' ? 'Purok Leaders' : 'Household Residents'}</p>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-3xl border border-slate-100">
+                  <p className="text-[10px] uppercase tracking-[0.4em] text-slate-400 font-black mb-3">Assigned Zone</p>
+                  <p className="text-sm font-bold text-slate-900">{displayZone}</p>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-3xl border border-slate-100">
+                  <p className="text-[10px] uppercase tracking-[0.4em] text-slate-400 font-black mb-3">Guide</p>
+                  <p className="text-sm text-slate-500">{userRole === 'household' ? 'Track your pickup request and review proof.' : userRole === 'collector' ? 'Confirm arrival and complete the run.' : 'Review Purok collection readiness.'}</p>
+                </div>
+              </div>
+
+              {selectedSchedule.proofPhotoUrl && (
+                <div className="bg-slate-100 p-4 rounded-3xl border border-slate-200">
+                  <p className="text-[10px] uppercase tracking-[0.4em] text-slate-400 font-black mb-3">Verification Photo</p>
+                  <img src={selectedSchedule.proofPhotoUrl} alt="Schedule proof" className="w-full rounded-3xl object-cover h-56" referrerPolicy="no-referrer" />
+                </div>
+              )}
+
+              <div className="grid gap-3 md:grid-cols-2">
+                {userRole === 'collector' && selectedSchedule.status !== 'Completed' && (
+                  <button
+                    onClick={() => {
+                      updateScheduleStatus(selectedSchedule.id, 'Completed');
+                      setSelectedSchedule({ ...selectedSchedule, status: 'Completed' });
+                    }}
+                    className="w-full py-3 bg-emerald-600 text-white rounded-3xl text-sm font-black uppercase tracking-[0.2em] transition hover:bg-emerald-700"
+                  >
+                    Confirm Pickup Completed
+                  </button>
+                )}
+                {userRole === 'household' && selectedSchedule.status === 'Pending' && (
+                  <button
+                    onClick={() => {
+                      setSelectedSchedule(null);
+                      setCurrentScreen('complaints');
+                    }}
+                    className="w-full py-3 bg-slate-900 text-white rounded-3xl text-sm font-black uppercase tracking-[0.2em] transition hover:bg-slate-800"
+                  >
+                    Open Pickup Support
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    if (userRole === 'leader') {
+                      setSelectedSchedule(null);
+                      setCurrentScreen('route-map');
+                    } else {
+                      setSelectedSchedule(null);
+                    }
+                  }}
+                  className="w-full py-3 border border-slate-200 rounded-3xl text-slate-700 font-black uppercase tracking-[0.2em] transition hover:bg-slate-50"
+                >
+                  {userRole === 'leader' ? 'Open Route Map' : 'Close details'}
+                </button>
               </div>
             </div>
           </div>

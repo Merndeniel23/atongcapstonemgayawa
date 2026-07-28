@@ -36,19 +36,11 @@ export default function UserProfilePanel() {
   ];
 
   // Local state for form input fields
-  const [name, setName] = useState(activeUser.name);
-  const [email, setEmail] = useState(activeUser.email || '');
-  const [address, setAddress] = useState(activeUser.address || '123 Purok Central');
-  const [householdId, setHouseholdId] = useState<string>(
-    activeUser.householdId ||
-      ('id' in activeUser ? String(activeUser.id) : '') ||
-      'HH-2026-904'
-  );
-  const [contactInfo, setContactInfo] = useState<string>(
-    ('phone' in activeUser ? activeUser.phone : '') ||
-      ('contactInfo' in activeUser ? activeUser.contactInfo : '') ||
-      '0912345678'
-  );
+  const [name, setName] = useState((activeUser as any).name);
+  const [email, setEmail] = useState((activeUser as any).email || '');
+  const [address, setAddress] = useState((activeUser as any).address || '123 Purok Central');
+  const [householdId, setHouseholdId] = useState((activeUser as any).householdId || (activeUser as any).id || 'HH-2026-904');
+  const [contactInfo, setContactInfo] = useState((activeUser as any).phone || (activeUser as any).contactInfo || '0912345678');
   const [selectedBarangay, setSelectedBarangay] = useState('Poblacion');
   const [selectedPurok, setSelectedPurok] = useState('Purok 4');
 
@@ -68,22 +60,14 @@ export default function UserProfilePanel() {
   useEffect(() => {
     const active = currentUser || userProfile;
     if (active) {
-      setName(active.name);
-      setEmail(active.email || 'test@household.com');
-      setAddress(active.address || '123 Purok Central');
-      setHouseholdId(
-        active.householdId ||
-          ('id' in active ? String(active.id) : '') ||
-          'HH-2026-904'
-      );
-      setContactInfo(
-        ('phone' in active ? active.phone : '') ||
-          ('contactInfo' in active ? active.contactInfo : '') ||
-          '0912345678'
-      );
-      setCorrectionAddress(active.address || '123 Purok Central');
+      setName((active as any).name);
+      setEmail((active as any).email || 'test@household.com');
+      setAddress((active as any).address || '123 Purok Central');
+      setHouseholdId((active as any).householdId || (active as any).id || 'HH-2026-904');
+      setContactInfo((active as any).phone || (active as any).contactInfo || '0912345678');
+      setCorrectionAddress((active as any).address || '123 Purok Central');
       
-      const rawZone = active.communalZone || 'Purok 4 communal zone';
+      const rawZone = (active as any).communalZone || 'Purok 4 communal zone';
       let p = 'Purok 4';
       let b = 'Poblacion';
       
@@ -149,12 +133,10 @@ export default function UserProfilePanel() {
     }
 
     updateProfile({
-      name: data.user.full_name,
-      email: data.user.email,
-      phone: data.user.phone || '',
-      contactInfo: data.user.phone || '',
-      address: data.user.address || '',
-      householdId: `USR-${String(data.user.id).padStart(4, '0')}`,
+      name: name.trim(),
+      address: address.trim(),
+      householdId: householdId.trim(),
+      contactInfo: contactInfo.trim(),
       communalZone: `${selectedPurok}, ${selectedBarangay}`,
     });
 

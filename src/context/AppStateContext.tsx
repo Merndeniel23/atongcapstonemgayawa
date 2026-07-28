@@ -121,13 +121,6 @@ interface AppState {
   resetPayments: () => void;
   simulateIncomingPayment: () => void;
   approveAddressCorrection: (householdName: string, purok: string, barangay: string, physicalAddress: string) => void;
-  automatedRemindersEnabled: boolean;
-  setAutomatedRemindersEnabled: (val: boolean) => void;
-  pushNotificationChannel: 'both' | 'browser' | 'in_app';
-  setPushNotificationChannel: (val: 'both' | 'browser' | 'in_app') => void;
-  activePushNotification: { id: string; title: string; body: string; scheduleId: string; type?: string } | null;
-  setActivePushNotification: (val: any) => void;
-  triggerAutomatedReminder: (schedule: ScheduleItem) => void;
 }
 
 const defaultProfile: UserProfile = {
@@ -343,147 +336,6 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   });
 
   // Automated pickup reminders states
-  const [automatedRemindersEnabled, setAutomatedRemindersEnabled] = useState<boolean>(() => {
-    return localStorage.getItem('sg_automated_reminders_enabled') !== 'false';
-  });
-
-  const [pushNotificationChannel, setPushNotificationChannel] = useState<'both' | 'browser' | 'in_app'>(() => {
-    const saved = localStorage.getItem('sg_push_notification_channel');
-    return (saved as any) || 'both';
-  });
-
-  const [activePushNotification, setActivePushNotification] = useState<{ id: string; title: string; body: string; scheduleId: string; type?: string } | null>(null);
-
-  const [triggeredReminders, setTriggeredReminders] = useState<string[]>(() => {
-    const saved = localStorage.getItem('sg_triggered_reminders');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  useEffect(() => {
-    localStorage.setItem('sg_automated_reminders_enabled', String(automatedRemindersEnabled));
-  }, [automatedRemindersEnabled]);
-
-  useEffect(() => {
-    localStorage.setItem('sg_push_notification_channel', pushNotificationChannel);
-  }, [pushNotificationChannel]);
-
-  useEffect(() => {
-    localStorage.setItem('sg_triggered_reminders', JSON.stringify(triggeredReminders));
-  }, [triggeredReminders]);
-
-  const triggerAutomatedReminder = (schedule: ScheduleItem) => {
-    // 1. Double beep chime sound using browser Web Audio API
-    try {
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, audioCtx.currentTime); // A5 note
-      gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
-      osc.start();
-      osc.stop(audioCtx.currentTime + 0.15);
-      
-      setTimeout(() => {
-        try {
-          const audioCtx2 = new (window.AudioContext || (window as any).webkitAudioContext)();
-          const osc2 = audioCtx2.createOscillator();
-          const gain2 = audioCtx2.createGain();
-          osc2.connect(gain2);
-          gain2.connect(audioCtx2.destination);
-          osc2.type = 'sine';
-          osc2.frequency.setValueAtTime(1046.50, audioCtx2.currentTime); // C6 note
-          gain2.gain.setValueAtTime(0.12, audioCtx2.currentTime);
-          osc2.start();
-          osc2.stop(audioCtx2.currentTime + 0.3);
-        } catch (e) {
-          // nested fail-safe
-        }
-      }, 150);
-    } catch (e) {
-      console.warn('Simulated chime blocked by browser autoplay policy:', e);
-    }
-
-    // 2. Real Web Push Notifications API (if permitted)
-    if (pushNotificationChannel === 'both' || pushNotificationChannel === 'browser') {
-      if ('Notification' in window) {
-        if (Notification.permission === 'granted') {
-          new Notification("Garbage Pickup Reminder", {
-            body: `Your scheduled ${schedule.type} pickup is in exactly 1 hour (${schedule.time.split('-')[0].trim()}) at ${schedule.location}!`,
-            icon: '/favicon.ico',
-            tag: `reminder-${schedule.id}`
-          });
-        } else if (Notification.permission !== 'denied') {
-          Notification.requestPermission().then(permission => {
-            if (permission === 'granted') {
-              new Notification("Garbage Pickup Reminder", {
-                body: `Your scheduled ${schedule.type} pickup is in exactly 1 hour (${schedule.time.split('-')[0].trim()}) at ${schedule.location}!`,
-                icon: '/favicon.ico',
-                tag: `reminder-${schedule.id}`
-              });
-            }
-          });
-        }
-      }
-    }
-
-    // 3. Set custom state for in-app floating push notification banner (slides down)
-    setActivePushNotification({
-      id: `push-${Date.now()}`,
-      title: '🚨 BARANGAY PICKUP REMINDER',
-      body: `Your scheduled '${schedule.type}' garbage pickup cycle starts in exactly 1 hour (${schedule.time.split('-')[0].trim()}) at ${schedule.location}. Please prepare and sort your bins!`,
-      scheduleId: schedule.id,
-      type: schedule.type
-    });
-
-    // 4. Log permanently to central in-app notification list
-    addNotification({
-      title: `Pickup Reminder: ${schedule.type}`,
-      priority: 'schedule',
-      message: `Automated Reminder: Your scheduled ${schedule.type} is starting in 1 hour (${schedule.time.split('-')[0].trim()}) at ${schedule.location}. Please make sure your garbage is segregated and set out on the curb!`,
-      audience: 'household',
-      author: 'Automated Despatch',
-      date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-    });
-  };
-
-  // Background interval logic to check schedules
-  useEffect(() => {
-    if (!automatedRemindersEnabled) return;
-
-    const checkSchedules = () => {
-      schedules.forEach(schedule => {
-        if (schedule.status === 'Completed') return;
-        if (triggeredReminders.includes(schedule.id)) return;
-
-        try {
-          const startTimePart = schedule.time.split('-')[0].trim(); // e.g. "09:00 AM"
-          const dateTimeStr = `${schedule.date} ${startTimePart}`; // e.g. "Oct 24, 2026 09:00 AM"
-          const parsedStart = new Date(dateTimeStr);
-          
-          if (!isNaN(parsedStart.getTime())) {
-            const diffMs = parsedStart.getTime() - Date.now();
-            const diffMinutes = diffMs / 60000;
-
-            // Trigger reminder if the start time is within the 1-hour window (50 to 60 mins from now)
-            if (diffMinutes > 0 && diffMinutes <= 60) {
-              setTriggeredReminders(prev => [...prev, schedule.id]);
-              triggerAutomatedReminder(schedule);
-            }
-          }
-        } catch (err) {
-          // ignore parsing errors
-        }
-      });
-    };
-
-    const intervalId = setInterval(checkSchedules, 15000); // Check every 15s
-    checkSchedules(); // Initial run
-
-    return () => clearInterval(intervalId);
-  }, [schedules, automatedRemindersEnabled, triggeredReminders]);
 
   // Save changes of registered users
   useEffect(() => {
@@ -910,13 +762,6 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         resetPayments,
         simulateIncomingPayment,
         approveAddressCorrection,
-        automatedRemindersEnabled,
-        setAutomatedRemindersEnabled,
-        pushNotificationChannel,
-        setPushNotificationChannel,
-        activePushNotification,
-        setActivePushNotification,
-        triggerAutomatedReminder,
       }}
     >
       {children}
