@@ -13,12 +13,18 @@ const roles = ["admin", "resident", "collector", "purok_leader"] as const;
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-function createToken(user: { id: number; role: string; email: string }) {
+function createToken(user: {
+  id: number;
+  role: string;
+  email: string;
+  purok_id?: number | null;
+}) {
   return jwt.sign(
     {
       id: user.id,
       role: user.role,
       email: user.email,
+      purok_id: user.purok_id ?? null,
     },
     process.env.JWT_SECRET || "change-me",
     { expiresIn: "12h" },

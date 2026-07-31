@@ -33,7 +33,7 @@ interface CommunalPoint {
   proofPhotoUrl?: string;
 }
 
-export default function MapView() {
+export default function MapView({ viewOnly = false }: { viewOnly?: boolean }) {
   const { schedules, updateScheduleStatus } = useAppState();
 
   // Local storage coordination for communal points (synced with CollectorDashboard)
@@ -174,6 +174,8 @@ export default function MapView() {
 
   // Start route towards a targeted location
   const handleStartRoute = (loc: typeof mapLocations[0]) => {
+    if (viewOnly) return;
+
     setActiveTarget({
       id: loc.id,
       type: loc.type,
@@ -296,8 +298,14 @@ export default function MapView() {
 
       <header className="shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-extrabold text-[#1E293B] tracking-tight">Interactive Route Map</h1>
-          <p className="text-slate-500 text-sm">Targeting: Barangay Central • Area A dispatch zone</p>
+          <h1 className="text-3xl font-extrabold text-[#1E293B] tracking-tight">
+            {viewOnly ? "Collector Monitoring" : "Interactive Route Map"}
+          </h1>
+          <p className="text-slate-500 text-sm">
+            {viewOnly
+              ? "View collector routes and collection progress."
+              : "Targeting: Barangay Central • Area A dispatch zone"}
+          </p>
         </div>
         
         {/* Filters and Controls */}
@@ -561,6 +569,11 @@ export default function MapView() {
                             <div className="flex-1 bg-emerald-50 text-emerald-700 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 border border-emerald-100">
                               <CheckCircle2 className="w-4 h-4" />
                               Waste Fully Collected
+                            </div>
+                          ) : viewOnly ? (
+                            <div className="flex-1 bg-slate-100 text-slate-600 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 border border-slate-200">
+                              <Truck className="w-4 h-4" />
+                              Monitoring Only
                             </div>
                           ) : (
                             <button 
@@ -859,6 +872,10 @@ export default function MapView() {
                        {loc.collected ? (
                          <span className="text-[9px] bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full font-black uppercase">
                            Collected
+                         </span>
+                       ) : viewOnly ? (
+                         <span className="text-[9px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-black uppercase">
+                           Monitor
                          </span>
                        ) : (
                          <button

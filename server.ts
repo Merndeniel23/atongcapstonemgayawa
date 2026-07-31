@@ -7,6 +7,9 @@ import cors from "cors";
 import authRoutes from "./routes/auth.js";
 import { db, testDatabaseConnection } from "./config/db.js";
 import inspectionsRouter from "./routes/inspections";
+import garbageBinsRouter from "./routes/garbageBins.js";
+import collectionSchedulesRouter from "./routes/collectionSchedules.js";
+import collectionRequestsRouter from "./routes/collectionRequests.js";
 dotenv.config();
 
 
@@ -26,6 +29,9 @@ app.get("/api/health", async (_req, res) => {
 });
 app.use("/api/auth", authRoutes);
 app.use("/api/inspections", inspectionsRouter);
+app.use("/api/garbage-bins", garbageBinsRouter);
+app.use("/api/collection-schedules", collectionSchedulesRouter);
+app.use("/api/collection-requests", collectionRequestsRouter);
 
 // Initialize Gemini client on the server securely
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({

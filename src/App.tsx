@@ -26,11 +26,28 @@ import UserProfilePanel from './components/UserProfilePanel';
 import ComplaintsPanel from './components/ComplaintsPanel';
 import NotificationsPanel from './components/NotificationsPanel';
 import BinInspections from './components/BinInspections';
+import ManageGarbageBins from "./components/ManageGarbageBins";
 
 import { AppStateProvider, useAppState } from './context/AppStateContext';
 
 type Role = 'household' | 'collector' | 'leader' | 'admin';
-type Screen = 'registration' | 'dashboard' | 'collector-tasks' | 'leader-dashboard' | 'admin-dashboard' | 'user-management' | 'members-list' | 'route-map' | 'schedule' | 'complaints' | 'payments' | 'notifications' | 'profile' | 'endorsements' | 'bin-inspections';
+type Screen =
+  | 'registration'
+  | 'dashboard'
+  | 'collector-tasks'
+  | 'leader-dashboard'
+  | 'admin-dashboard'
+  | 'user-management'
+  | 'members-list'
+  | 'route-map'
+  | 'schedule'
+  | 'complaints'
+  | 'payments'
+  | 'notifications'
+  | 'profile'
+  | 'endorsements'
+  | 'bin-inspections'
+  | 'garbage-bins';
 
 export default function App() {
   return (
@@ -97,6 +114,7 @@ function AppContent() {
               {currentScreen === 'user-management' && <UserManagement />}
               {currentScreen === 'members-list' && <MembersList />}
               {currentScreen === 'bin-inspections' && <BinInspections />}
+              {currentScreen === 'garbage-bins' && <ManageGarbageBins />}
               {currentScreen === 'route-map' && <MapView />}
               {currentScreen === 'schedule' && <Schedule />}
               {currentScreen === 'complaints' && <ComplaintsPanel role={userRole} />}

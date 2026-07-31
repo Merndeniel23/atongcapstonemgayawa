@@ -4,6 +4,7 @@ import { GoogleOAuthProvider } from '@react-oauth/google';
 
 import App from './App';
 import './index.css';
+import 'leaflet/dist/leaflet.css';
 
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 

@@ -1,4 +1,21 @@
-import { ClipboardCheck, LayoutDashboard, Calendar, MessageSquare, CreditCard, Bell, User, LogOut, Map, Truck, ClipboardList, Shield, Settings, Users, Award } from 'lucide-react';
+import {
+  ClipboardCheck,
+  LayoutDashboard,
+  Calendar,
+  MessageSquare,
+  CreditCard,
+  Bell,
+  User,
+  LogOut,
+  Map,
+  Truck,
+  ClipboardList,
+  Shield,
+  Settings,
+  Users,
+  Award,
+  MapPinned,
+} from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
 
 interface SidebarProps {
@@ -36,6 +53,7 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, role }: Side
 
   const leaderItems = [
     { id: 'leader-dashboard', icon: LayoutDashboard, label: 'Leader HUD' },
+    { id: 'garbage-bins', icon: MapPinned, label: 'Garbage Bins' },
     { id: 'bin-inspections', icon: ClipboardCheck, label: 'Bin Inspections' },
     { id: 'members-list', icon: User, label: 'Purok Members' },
     { id: 'endorsements', icon: Award, label: 'Endorsements' },
@@ -48,16 +66,20 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, role }: Side
 
   const adminItems = [
     { id: 'admin-dashboard', icon: Shield, label: 'Admin Panel' },
+    { id: 'garbage-bins', icon: MapPinned, label: 'Garbage Bins' },
     { id: 'bin-inspections', icon: ClipboardCheck, label: 'Inspection Records' },
     { id: 'user-management', icon: Users, label: 'Manage Users' },
     { id: 'endorsements', icon: Award, label: 'Endorsements' },
     { id: 'payments', icon: CreditCard, label: 'Ledger Audit' },
     { id: 'complaints', icon: MessageSquare, label: 'Complaints & Tickets' },
-    { id: 'route-map', icon: Map, label: 'Global Map' },
-    { id: 'notifications', icon: Bell, label: 'Global Alerts', count: unreadCount },
+    {
+      id: 'notifications',
+      icon: Bell,
+      label: 'Global Alerts',
+      count: unreadCount,
+    },
     { id: 'profile', icon: Settings, label: 'Control Center' },
   ];
-
   const menuItems = role === 'collector' ? collectorItems : role === 'leader' ? leaderItems : role === 'admin' ? adminItems : householdItems;
 
   const getRoleLabel = () => {

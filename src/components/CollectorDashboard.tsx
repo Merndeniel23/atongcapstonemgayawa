@@ -1,342 +1,498 @@
-import { Map as MapIcon, Navigation, Truck, Package, Clock, ShieldCheck, Check, CheckCircle2, Calendar, AlertCircle, Plus, MapPin, Sparkles } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
-import { useAppState } from '../context/AppStateContext';
-import { useState, useEffect } from 'react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  MapPin,
+  Navigation,
+  Package,
+  RefreshCw,
+  ShieldCheck,
+  Truck,
+} from "lucide-react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 interface CollectorDashboardProps {
   setCurrentScreen: (screen: any) => void;
 }
 
-interface CommunalPoint {
+type CollectionRequest = {
   id: number;
-  location: string;
-  bins: number;
-  urgency: string;
-  time: string;
-  collected: boolean;
-  x: number;
-  y: number;
-  image: string;
-  desc: string;
+  bin_id: number;
+  inspection_id?: number | null;
+  requested_by: number;
+  priority: "low" | "normal" | "high" | "urgent";
+  status:
+    | "pending"
+    | "approved"
+    | "assigned"
+    | "in_progress"
+    | "completed"
+    | "cancelled";
+  reason?: string | null;
+  assigned_collector_id?: number | null;
+  requested_at?: string | null;
+  completed_at?: string | null;
+  created_at?: string | null;
+  bin_code: string;
+  location_name: string;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  current_status?: string | null;
+  condition_status?: string | null;
+  purok_name?: string | null;
+  barangay_name?: string | null;
+  requested_by_name?: string | null;
+  assigned_collector_name?: string | null;
+};
+
+function getToken(): string {
+  return (
+    localStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    ""
+  );
 }
 
-export default function CollectorDashboard({ setCurrentScreen }: CollectorDashboardProps) {
-  const { schedules, updateScheduleStatus } = useAppState();
+async function apiRequest(
+  url: string,
+  options: RequestInit = {},
+) {
+  const token = getToken();
 
-  // State to make standard communal collection points interactive and synchronized with the MapView
- const [communalPoints, setCommunalPoints] = useState<CommunalPoint[]>(() => {
-    const saved = typeof window !== 'undefined' ? localStorage.getItem('sg_communal_points') : null;
-    return saved ? JSON.parse(saved) : [
-      { id: 1, location: 'Purok 4 - Main Road', bins: 3, urgency: 'High', time: '10m away', collected: false, x: 30, y: 40, image: 'https://media.istockphoto.com/id/1323762998/photo/garbage-crisis-in-sector-1-bucharest.jpg?s=612x612&w=0&k=20&c=dlHXHjBYWnI2KMKIoeNNfXS35LypTQ9legUOz3-Iehw=', desc: 'Located near the community basketball court.' },
-      { id: 2, location: 'Purok 1 - Barangay Hall', bins: 5, urgency: 'Medium', time: '25m away', collected: false, x: 65, y: 25, image: 'https://media.istockphoto.com/id/2151562183/photo/the-man-throwing-garbage-into-the-trash-bin.jpg?s=612x612&w=0&k=20&c=JFws0xs9pPNHDc5voGR0bOLO4SEEqY6yxzDW2KQrjXo=', desc: 'Located near the Barangay Hall crossing.' },
-      { id: 3, location: 'Purok 7 - Market Area', bins: 8, urgency: 'Very High', time: '2m away', collected: false, x: 50, y: 70, image: 'https://media.istockphoto.com/id/2151575593/photo/trash-on-the-sidewalk.jpg?s=612x612&w=0&k=20&c=Ypy2z8Aj4CrI7TRonNlHdsttTZuLu4zeMpHk6nUdRSA=', desc: 'Located near the local pharmacy and fresh food market.' },
-    ];
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token
+        ? {
+            Authorization: `Bearer ${token}`,
+          }
+        : {}),
+      ...(options.headers || {}),
+    },
   });
 
-  useEffect(() => {
-    localStorage.setItem('sg_communal_points', JSON.stringify(communalPoints));
-  }, [communalPoints]);
+  const data = await response
+    .json()
+    .catch(() => ({}));
 
-  // Tab state for the collector task display
-  const [activeTab, setActiveTab] = useState<'communal' | 'resident'>('resident'); // default to resident so they can immediately see the bookings!
-
-  // Toggle communal collection point
-  const handleCollectCommunal = (id: number) => {
-    setCommunalPoints(prev =>
-      prev.map(p => p.id === id ? { ...p, collected: !p.collected, urgency: !p.collected ? 'Collected' : 'High' } : p)
+  if (!response.ok) {
+    throw new Error(
+      data.message || "Request failed.",
     );
+  }
+
+  return data;
+}
+
+function statusLabel(status: string): string {
+  return status
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (character) =>
+      character.toUpperCase(),
+    );
+}
+
+function formatDate(value?: string | null): string {
+  if (!value) {
+    return "No date";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString();
+}
+
+export default function CollectorDashboard({
+  setCurrentScreen,
+}: CollectorDashboardProps) {
+  const [requests, setRequests] =
+    useState<CollectionRequest[]>([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [updatingId, setUpdatingId] =
+    useState<number | null>(null);
+
+  const [errorMessage, setErrorMessage] =
+    useState("");
+
+  const [successMessage, setSuccessMessage] =
+    useState("");
+
+  const loadRequests = async () => {
+    setLoading(true);
+    setErrorMessage("");
+
+    try {
+      const result = await apiRequest(
+        "/api/collection-requests",
+      );
+
+      setRequests(result.requests || []);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to load collection requests.",
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // Calculations for dynamic stats matching the screenshot layout
-  const completedSchedulesCount = schedules.filter(s => s.status === 'Completed').length;
-  const completedCommunalCount = communalPoints.filter(p => p.collected).length;
-  
-  // Base values from screenshot: Total Pickups = 142, Completed Tasks = 8/12
-  const dynamicTotalPickups = 142 + completedSchedulesCount + completedCommunalCount;
-  
-  // Calculate Avg Fill % dynamically based on uncollected bins
-  const uncollectedBins = communalPoints.filter(p => !p.collected).reduce((acc, curr) => acc + curr.bins, 0);
-  const pendingSchedules = schedules.filter(s => s.status !== 'Completed').length;
-  const dynamicFillPercent = Math.max(20, Math.min(95, 78 - (completedCommunalCount * 8) - (completedSchedulesCount * 5) + (pendingSchedules * 3)));
+  useEffect(() => {
+    loadRequests();
+  }, []);
 
-  const dynamicCompletedRatio = `${8 + completedSchedulesCount + completedCommunalCount}/${12 + (schedules.length - 3) + (communalPoints.filter(p => p.collected).length)}`;
+  const updateStatus = async (
+    requestId: number,
+    status:
+      | "assigned"
+      | "in_progress"
+      | "completed",
+  ) => {
+    setUpdatingId(requestId);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const result = await apiRequest(
+        `/api/collection-requests/${requestId}/status`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status }),
+        },
+      );
+
+      setSuccessMessage(
+        result.message ||
+          "Collection request updated.",
+      );
+
+      await loadRequests();
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to update collection request.",
+      );
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const stats = useMemo(() => {
+    const active = requests.filter(
+      (request) =>
+        !["completed", "cancelled"].includes(
+          request.status,
+        ),
+    ).length;
+
+    const completed = requests.filter(
+      (request) =>
+        request.status === "completed",
+    ).length;
+
+    const urgent = requests.filter(
+      (request) =>
+        request.priority === "urgent" &&
+        request.status !== "completed",
+    ).length;
+
+    return {
+      total: requests.length,
+      active,
+      completed,
+      urgent,
+    };
+  }, [requests]);
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
-      <header className="flex flex-col gap-2">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-extrabold text-[#1E293B] tracking-tight">Collector Dashboard</h1>
-            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mt-1">Live Garbage Dispatch & Verification HUD</p>
-          </div>
-          <div className="hidden sm:flex items-center gap-2 bg-emerald-50 border border-emerald-100 text-emerald-800 text-[10px] font-black uppercase px-3.5 py-1.5 rounded-full shadow-sm">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            Live Sync: Online
-          </div>
+    <div className="space-y-7">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-black text-slate-900">
+            Collector Dashboard
+          </h1>
+
+          <p className="mt-1 text-xs font-bold uppercase tracking-wider text-slate-500">
+            Database-connected collection requests
+          </p>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={loadRequests}
+            className="flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-black text-slate-700"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${
+                loading ? "animate-spin" : ""
+              }`}
+            />
+            Refresh
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              setCurrentScreen("route-map")
+            }
+            className="flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-black text-white"
+          >
+            <Navigation className="h-4 w-4" />
+            Open Route Map
+          </button>
         </div>
       </header>
 
-      {/* Hero Service Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {successMessage && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">
+          {successMessage}
+        </div>
+      )}
+
+      {errorMessage && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">
+          {errorMessage}
+        </div>
+      )}
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          { label: 'Total Pickups', value: String(dynamicTotalPickups), sub: `+${12 + completedSchedulesCount + completedCommunalCount} today`, icon: Truck, color: 'emerald' },
-          { label: 'Avg. Fill %', value: `${dynamicFillPercent}%`, sub: 'Across Area A', icon: Package, color: 'blue' },
-          { label: 'Completed', value: dynamicCompletedRatio, sub: 'Tasks', icon: ShieldCheck, color: 'indigo' },
-        ].map((stat, i) => (
-          <div key={i} className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm flex flex-col justify-between">
-            <div className="flex justify-between items-start mb-4">
-               <div>
-                 <p className="text-slate-500 text-xs font-bold uppercase tracking-wider">{stat.label}</p>
-                 <p className="text-3xl font-black text-slate-900 mt-1">{stat.value}</p>
-               </div>
-               <div className={`p-3 rounded-2xl bg-${stat.color}-50 text-${stat.color}-600`}>
-                 <stat.icon className="w-6 h-6" />
-               </div>
+          {
+            label: "Total Requests",
+            value: stats.total,
+            icon: Package,
+          },
+          {
+            label: "Active Queue",
+            value: stats.active,
+            icon: Truck,
+          },
+          {
+            label: "Urgent",
+            value: stats.urgent,
+            icon: AlertCircle,
+          },
+          {
+            label: "Completed",
+            value: stats.completed,
+            icon: ShieldCheck,
+          },
+        ].map((item) => (
+          <div
+            key={item.label}
+            className="rounded-2xl border bg-white p-5 shadow-sm"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold uppercase text-slate-500">
+                  {item.label}
+                </p>
+
+                <p className="mt-1 text-3xl font-black text-slate-900">
+                  {item.value}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700">
+                <item.icon className="h-6 w-6" />
+              </div>
             </div>
-            <p className={`text-[10px] font-bold text-${stat.color}-600`}>{stat.sub}</p>
           </div>
         ))}
       </div>
 
-      {/* Main Task Section */}
-      <section className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden">
-        {/* Banner Header */}
-        <div className="p-6 bg-[#059669] text-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div className="space-y-1">
-            <h2 className="font-bold flex items-center gap-2 text-lg">
-              <Navigation className="w-5 h-5" />
-              Active Dispatch Queue
+      <section className="overflow-hidden rounded-3xl border bg-white shadow-sm">
+        <div className="flex flex-col gap-2 bg-emerald-700 p-6 text-white sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="flex items-center gap-2 text-lg font-black">
+              <Truck className="h-5 w-5" />
+              Active Collection Queue
             </h2>
-            <p className="text-emerald-100 text-[10px] font-medium uppercase tracking-wider">Accept or complete pending resident and communal collections</p>
+
+            <p className="mt-1 text-xs text-emerald-100">
+              Accept, start, and complete assigned collection requests.
+            </p>
           </div>
-          <button 
-            onClick={() => setCurrentScreen('route-map')}
-            className="text-xs bg-white text-emerald-600 font-extrabold px-4 py-2 rounded-full hover:bg-emerald-50 transition-all shadow-sm active:scale-95"
-          >
-            View Live Route Map
-          </button>
+
+          <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-black">
+            {stats.active} active
+          </span>
         </div>
 
-        {/* Tab Selection */}
-        <div className="flex border-b border-slate-100 bg-slate-50/50 p-2 gap-1">
-          <button
-            onClick={() => setActiveTab('resident')}
-            className={`flex-1 py-3 text-center rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
-              activeTab === 'resident' 
-                ? 'bg-white text-emerald-600 shadow-sm border border-slate-100' 
-                : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
-            }`}
-          >
-            <Calendar className="w-4 h-4" />
-            Resident Bookings ({schedules.filter(s => s.status !== 'Completed').length})
-          </button>
-          <button
-            onClick={() => setActiveTab('communal')}
-            className={`flex-1 py-3 text-center rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
-              activeTab === 'communal' 
-                ? 'bg-white text-emerald-600 shadow-sm border border-slate-100' 
-                : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
-            }`}
-          >
-            <Package className="w-4 h-4" />
-            Communal Bins ({communalPoints.filter(p => !p.collected).length})
-          </button>
-        </div>
-        
-        {/* Dynamic List Display */}
-        <div className="divide-y divide-slate-100 min-h-[300px]">
-          <AnimatePresence mode="popLayout">
-            {activeTab === 'resident' && (
-              <div className="divide-y divide-slate-100">
-                {schedules.map((item) => (
-                  <motion.div 
-                    layout
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    key={item.id} 
-                    className="p-6 flex flex-col sm:flex-row sm:items-center justify-between hover:bg-slate-50/70 transition-colors gap-4"
-                  >
-                    <div className="flex items-start gap-4">
-                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
-                        item.status === 'Completed' ? 'bg-emerald-50 text-emerald-600' :
-                        item.status === 'Confirmed' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600'
-                      }`}>
-                        <Truck className="w-6 h-6" />
-                      </div>
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className="font-extrabold text-slate-900 text-sm">{item.location}</h4>
-                          <span className="text-[9px] bg-emerald-50 text-emerald-700 px-2.5 py-0.5 rounded-full font-black uppercase tracking-wider border border-emerald-100">
-                            Household Booking
-                          </span>
-                          <span className={`text-[9px] px-2.5 py-0.5 rounded-full font-black uppercase tracking-wider border ${
-                            item.status === 'Completed' ? 'bg-emerald-50 text-emerald-600 border-emerald-150' :
-                            item.status === 'Confirmed' ? 'bg-indigo-50 text-indigo-600 border-indigo-150' :
-                            'bg-amber-50 text-amber-600 border-amber-150'
-                          }`}>
-                            {item.status}
-                          </span>
-                        </div>
-                        <p className="text-xs font-bold text-slate-500 flex items-center gap-1">
-                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                          {item.date} • <Clock className="w-3.5 h-3.5 text-slate-400" /> {item.time}
-                        </p>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                          Type: <span className="text-slate-700">{item.type}</span>
-                        </p>
-                      </div>
-                    </div>
+        <div className="divide-y">
+          {requests.map((request) => {
+            const busy =
+              updatingId === request.id;
 
-                    <div className="flex items-center gap-2 self-end sm:self-center">
-                      {item.status === 'Pending' && (
-                        <>
-                          <button
-                            onClick={() => updateScheduleStatus(item.id, 'Confirmed')}
-                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 border-none cursor-pointer"
-                          >
-                            Accept & Route
-                          </button>
-                          <button
-                            onClick={() => updateScheduleStatus(item.id, 'Completed')}
-                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 border-none cursor-pointer"
-                          >
-                            Mark Completed
-                          </button>
-                        </>
-                      )}
-                      
-                      {item.status === 'Confirmed' && (
-                        <button
-                          onClick={() => updateScheduleStatus(item.id, 'Completed')}
-                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 border-none cursor-pointer flex items-center gap-1.5"
-                        >
-                          <Check className="w-4 h-4" />
-                          Complete Pickup
-                        </button>
-                      )}
-
-                      {item.status === 'Upcoming' && (
-                        <button
-                          onClick={() => updateScheduleStatus(item.id, 'Completed')}
-                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 border-none cursor-pointer"
-                        >
-                          Mark Completed
-                        </button>
-                      )}
-
-                      {item.status === 'Completed' && (
-                        <div className="flex items-center gap-1.5 text-emerald-600 bg-emerald-50 border border-emerald-100 px-3.5 py-1.5 rounded-xl">
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span className="text-xs font-black uppercase tracking-wider">Collected</span>
-                        </div>
-                      )}
-                    </div>
-                  </motion.div>
-                ))}
-                {schedules.length === 0 && (
-                  <div className="p-12 text-center text-slate-400 space-y-2">
-                    <AlertCircle className="w-8 h-8 mx-auto text-slate-300" />
-                    <p className="font-bold text-sm">No Household Bookings Found</p>
-                    <p className="text-xs text-slate-400">Residents haven't submitted any scheduled pickups yet.</p>
+            return (
+              <article
+                key={request.id}
+                className="flex flex-col gap-5 p-6 lg:flex-row lg:items-center lg:justify-between"
+              >
+                <div className="flex min-w-0 gap-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
+                    <MapPin className="h-6 w-6" />
                   </div>
-                )}
-              </div>
-            )}
 
-            {activeTab === 'communal' && (
-              <div className="divide-y divide-slate-100">
-                {communalPoints.map((point) => (
-                  <motion.div 
-                    layout
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    key={point.id} 
-                    className="p-6 flex flex-col sm:flex-row sm:items-center justify-between hover:bg-slate-50 transition-colors gap-4"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
-                        point.collected ? 'bg-emerald-50 text-emerald-500' :
-                        point.urgency === 'Very High' ? 'bg-rose-50 text-rose-500' : 'bg-emerald-50 text-emerald-500'
-                      }`}>
-                        <Package className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className="font-extrabold text-slate-900 text-sm">{point.location}</h4>
-                          <span className="text-[9px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-black uppercase tracking-wider">
-                            Communal Barrel
-                          </span>
-                          {!point.collected && (
-                            <span className={`text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider ${
-                              point.urgency === 'Very High' ? 'bg-rose-50 text-rose-600 border border-rose-100' :
-                              point.urgency === 'High' ? 'bg-amber-50 text-amber-600 border border-amber-100' :
-                              'bg-slate-50 text-slate-600 border border-slate-100'
-                            }`}>
-                              {point.urgency} Urgency
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-3 mt-1.5">
-                          <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">{point.bins} Bins</span>
-                          <span className="text-[10px] text-slate-400 flex items-center gap-1 font-medium">
-                            <Clock className="w-3 h-3" />
-                            {point.collected ? 'Processed' : point.time}
-                          </span>
-                        </div>
-                      </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-black text-slate-900">
+                        {request.bin_code} —{" "}
+                        {request.location_name}
+                      </h3>
+
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black uppercase text-slate-600">
+                        {statusLabel(
+                          request.status,
+                        )}
+                      </span>
+
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${
+                          request.priority ===
+                          "urgent"
+                            ? "bg-rose-100 text-rose-700"
+                            : request.priority ===
+                                "high"
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-blue-100 text-blue-700"
+                        }`}
+                      >
+                        {request.priority}
+                      </span>
                     </div>
 
-                    <div className="flex items-center gap-2 self-end sm:self-center">
-                      {!point.collected ? (
-                        <>
-                          <button 
-                            onClick={() => setCurrentScreen('route-map')}
-                            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all border-none cursor-pointer active:scale-95"
-                          >
-                            Nav Route
-                          </button>
-                          <button 
-                            onClick={() => handleCollectCommunal(point.id)}
-                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm border-none cursor-pointer active:scale-95"
-                          >
-                            Collect Bins
-                          </button>
-                        </>
-                      ) : (
-                        <div className="flex items-center gap-1.5 text-emerald-600 bg-emerald-50 border border-emerald-100 px-3.5 py-1.5 rounded-xl">
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span className="text-xs font-black uppercase tracking-wider">Collected</span>
-                        </div>
+                    <p className="mt-1 text-sm text-slate-600">
+                      {request.purok_name ||
+                        "Unassigned purok"}
+                      {request.barangay_name
+                        ? `, ${request.barangay_name}`
+                        : ""}
+                    </p>
+
+                    <p className="mt-1 text-xs text-slate-500">
+                      {request.reason ||
+                        "No additional reason provided."}
+                    </p>
+
+                    <p className="mt-2 flex items-center gap-1 text-[11px] font-bold text-slate-400">
+                      <Clock className="h-3.5 w-3.5" />
+                      Requested:{" "}
+                      {formatDate(
+                        request.requested_at ||
+                          request.created_at,
                       )}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 lg:justify-end">
+                  {request.status ===
+                    "pending" && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() =>
+                        updateStatus(
+                          request.id,
+                          "assigned",
+                        )
+                      }
+                      className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-black uppercase text-white disabled:opacity-50"
+                    >
+                      Accept Request
+                    </button>
+                  )}
+
+                  {[
+                    "approved",
+                    "assigned",
+                  ].includes(
+                    request.status,
+                  ) && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() =>
+                        updateStatus(
+                          request.id,
+                          "in_progress",
+                        )
+                      }
+                      className="rounded-xl bg-amber-500 px-4 py-2 text-xs font-black uppercase text-white disabled:opacity-50"
+                    >
+                      Start Route
+                    </button>
+                  )}
+
+                  {request.status ===
+                    "in_progress" && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() =>
+                        updateStatus(
+                          request.id,
+                          "completed",
+                        )
+                      }
+                      className="flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-xs font-black uppercase text-white disabled:opacity-50"
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      Mark Collected
+                    </button>
+                  )}
+
+                  {request.status ===
+                    "completed" && (
+                    <div className="flex items-center gap-2 rounded-xl bg-emerald-50 px-4 py-2 text-xs font-black uppercase text-emerald-700">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Collected
                     </div>
-                  </motion.div>
-                ))}
+                  )}
+                </div>
+              </article>
+            );
+          })}
+
+          {!loading &&
+            requests.length === 0 && (
+              <div className="p-12 text-center text-slate-500">
+                <AlertCircle className="mx-auto mb-2 h-8 w-8 text-slate-300" />
+
+                <p className="font-black">
+                  No collection requests found
+                </p>
+
+                <p className="mt-1 text-xs">
+                  New collection requests will appear here.
+                </p>
               </div>
             )}
-          </AnimatePresence>
+
+          {loading && (
+            <div className="p-12 text-center text-slate-500">
+              <RefreshCw className="mx-auto mb-2 h-6 w-6 animate-spin" />
+              Loading collection requests...
+            </div>
+          )}
         </div>
       </section>
-
-      {/* Map Preview Card */}
-      <div 
-        onClick={() => setCurrentScreen('route-map')}
-        className="relative h-48 rounded-[2rem] overflow-hidden border-4 border-white shadow-xl group cursor-pointer"
-      >
-        <img 
-          src="https://media.istockphoto.com/id/578108630/photo/push-pins-on-a-road-map.jpg?s=612x612&w=0&k=20&c=Mf67L3jm7Ydq8FgJWGRiVJjFqpIwdZjBhjwPIB0Ba0E=" 
-          alt="Map Preview" 
-          className="w-full h-full object-cover filter brightness-75 group-hover:scale-105 transition-transform duration-700"
-          referrerPolicy="no-referrer"
-        />
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="bg-white/90 backdrop-blur-sm px-6 py-3 rounded-2xl flex items-center gap-3 shadow-lg">
-             <MapIcon className="w-6 h-6 text-emerald-600" />
-             <span className="font-bold text-slate-900">Open Interactive Route Map</span>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
