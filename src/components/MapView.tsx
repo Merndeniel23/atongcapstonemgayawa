@@ -8,6 +8,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import {
   AlertCircle,
+  CalendarDays,
   CheckCircle2,
   Clock,
   MapPin,
@@ -15,6 +16,36 @@ import {
   RefreshCw,
   Truck,
 } from "lucide-react";
+
+type BinStatus =
+  | "empty"
+  | "half-full"
+  | "half_full"
+  | "full"
+  | "overflowing"
+  | string;
+
+type GarbageBin = {
+  id: number;
+  bin_code: string;
+  location_name: string;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  current_status?: BinStatus | null;
+  condition_status?: string | null;
+  last_inspected_at?: string | null;
+  is_active: number | boolean;
+  purok_id?: number | null;
+  purok_name?: string | null;
+  barangay_id?: number | null;
+  barangay_name?: string | null;
+  schedule_id?: number | null;
+  schedule_day?: string | null;
+  schedule_start_time?: string | null;
+  schedule_end_time?: string | null;
+  schedule_notes?: string | null;
+  is_scheduled_today?: number | boolean;
+};
 
 type CollectionRequest = {
   id: number;
@@ -30,20 +61,11 @@ type CollectionRequest = {
   reason?: string | null;
   requested_at?: string | null;
   completed_at?: string | null;
-  created_at?: string | null;
   assigned_collector_id?: number | null;
-  assigned_collector_name?: string | null;
+};
 
-  bin_code: string;
-  location_name: string;
-  latitude?: number | string | null;
-  longitude?: number | string | null;
-  current_status?: string | null;
-  condition_status?: string | null;
-
-  purok_id?: number | null;
-  purok_name?: string | null;
-  barangay_name?: string | null;
+type BinWithRequest = GarbageBin & {
+  request: CollectionRequest | null;
 };
 
 type MapViewProps = {
@@ -74,45 +96,32 @@ async function apiRequest(
     headers: {
       "Content-Type": "application/json",
       ...(token
-        ? {
-            Authorization: `Bearer ${token}`,
-          }
+        ? { Authorization: `Bearer ${token}` }
         : {}),
       ...(options.headers || {}),
     },
   });
 
-  const data = await response
-    .json()
-    .catch(() => ({}));
+  const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(
-      data.message || "Request failed.",
-    );
+    throw new Error(data.message || "Request failed.");
   }
 
   return data;
 }
 
-function hasCoordinates(
-  request: CollectionRequest,
-): boolean {
-  if (
-    request.latitude === null ||
-    request.latitude === undefined ||
-    request.latitude === "" ||
-    request.longitude === null ||
-    request.longitude === undefined ||
-    request.longitude === ""
-  ) {
-    return false;
-  }
-
-  const latitude = Number(request.latitude);
-  const longitude = Number(request.longitude);
+function hasCoordinates(bin: GarbageBin): boolean {
+  const latitude = Number(bin.latitude);
+  const longitude = Number(bin.longitude);
 
   return (
+    bin.latitude !== null &&
+    bin.latitude !== undefined &&
+    bin.latitude !== "" &&
+    bin.longitude !== null &&
+    bin.longitude !== undefined &&
+    bin.longitude !== "" &&
     Number.isFinite(latitude) &&
     latitude >= -90 &&
     latitude <= 90 &&
@@ -123,73 +132,133 @@ function hasCoordinates(
   );
 }
 
-function statusLabel(status: string): string {
-  return status
-    .replaceAll("_", " ")
+function normalizeStatus(value?: string | null): string {
+  return String(value || "empty")
+    .trim()
+    .toLowerCase()
+    .replaceAll("_", "-");
+}
+
+function statusLabel(value?: string | null): string {
+  return normalizeStatus(value)
+    .replaceAll("-", " ")
     .replace(/\b\w/g, (character) =>
       character.toUpperCase(),
     );
 }
 
 function formatDate(value?: string | null): string {
-  if (!value) {
-    return "No date";
-  }
+  if (!value) return "Not yet inspected";
 
   const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString();
+}
 
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
+function isScheduledToday(bin: GarbageBin): boolean {
+  return Number(bin.is_scheduled_today) === 1;
+}
 
-  return date.toLocaleString();
+function needsCollection(bin: GarbageBin): boolean {
+  const status = normalizeStatus(bin.current_status);
+  return (
+    isScheduledToday(bin) ||
+    status === "full" ||
+    status === "overflowing"
+  );
+}
+
+function priorityForBin(
+  bin: GarbageBin,
+): CollectionRequest["priority"] {
+  const status = normalizeStatus(bin.current_status);
+
+  if (status === "overflowing") return "urgent";
+  if (status === "full") return "high";
+  if (isScheduledToday(bin)) return "normal";
+  return "low";
+}
+
+function markerColor(bin: GarbageBin): string {
+  const status = normalizeStatus(bin.current_status);
+
+  if (!Boolean(Number(bin.is_active))) return "#64748b";
+  if (status === "overflowing") return "#dc2626";
+  if (status === "full") return "#f97316";
+  if (isScheduledToday(bin)) return "#16a34a";
+  if (status === "half-full") return "#eab308";
+  return "#2563eb";
+}
+
+function makeMarkerIcon(bin: GarbageBin): L.DivIcon {
+  const color = markerColor(bin);
+  const scheduledRing = isScheduledToday(bin)
+    ? "box-shadow: 0 0 0 4px rgba(34,197,94,.25);"
+    : "";
+
+  return L.divIcon({
+    className: "",
+    html: `
+      <div style="
+        width: 28px;
+        height: 28px;
+        border-radius: 999px 999px 999px 0;
+        transform: rotate(-45deg);
+        background: ${color};
+        border: 3px solid white;
+        ${scheduledRing}
+      ">
+        <div style="
+          width: 8px;
+          height: 8px;
+          margin: 7px;
+          border-radius: 999px;
+          background: white;
+        "></div>
+      </div>
+    `,
+    iconSize: [28, 28],
+    iconAnchor: [14, 28],
+    popupAnchor: [0, -29],
+  });
 }
 
 export default function MapView({
   viewOnly = false,
 }: MapViewProps) {
-  const mapContainerRef =
-    useRef<HTMLDivElement | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const markerLayerRef = useRef<L.LayerGroup | null>(null);
 
-  const mapRef =
-    useRef<L.Map | null>(null);
-
-  const markerLayerRef =
-    useRef<L.LayerGroup | null>(null);
-
+  const [bins, setBins] = useState<GarbageBin[]>([]);
   const [requests, setRequests] =
     useState<CollectionRequest[]>([]);
-
   const [selectedId, setSelectedId] =
     useState<number | null>(null);
-
-  const [loading, setLoading] =
-    useState(true);
-
+  const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] =
     useState<number | null>(null);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
 
-  const [errorMessage, setErrorMessage] =
-    useState("");
-
-  const [successMessage, setSuccessMessage] =
-    useState("");
-
-  const loadRequests = async () => {
+  const loadData = async () => {
     setLoading(true);
     setErrorMessage("");
 
     try {
-      const result = await apiRequest(
-        "/api/collection-requests",
-      );
+      const [binResult, requestResult] = await Promise.all([
+        apiRequest("/api/garbage-bins"),
+        apiRequest("/api/collection-requests"),
+      ]);
 
-      setRequests(result.requests || []);
+      setBins(binResult.bins || []);
+      setRequests(requestResult.requests || []);
     } catch (error) {
       setErrorMessage(
         error instanceof Error
           ? error.message
-          : "Failed to load collection requests.",
+          : "Failed to load collector route data.",
       );
     } finally {
       setLoading(false);
@@ -197,38 +266,29 @@ export default function MapView({
   };
 
   useEffect(() => {
-    loadRequests();
+    loadData();
   }, []);
 
   useEffect(() => {
-    if (
-      !mapContainerRef.current ||
-      mapRef.current
-    ) {
-      return;
-    }
+    if (!mapContainerRef.current || mapRef.current) return;
 
-    const map = L.map(
-      mapContainerRef.current,
-    ).setView(DEFAULT_CENTER, 14);
+    const map = L.map(mapContainerRef.current).setView(
+      DEFAULT_CENTER,
+      14,
+    );
 
     L.tileLayer(
       "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
       {
         maxZoom: 19,
-        attribution:
-          "&copy; OpenStreetMap contributors",
+        attribution: "&copy; OpenStreetMap contributors",
       },
     ).addTo(map);
 
-    markerLayerRef.current =
-      L.layerGroup().addTo(map);
-
+    markerLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
-    window.setTimeout(() => {
-      map.invalidateSize();
-    }, 150);
+    window.setTimeout(() => map.invalidateSize(), 150);
 
     return () => {
       map.remove();
@@ -237,77 +297,78 @@ export default function MapView({
     };
   }, []);
 
-  const visibleRequests = useMemo(
+  const activeRequestsByBin = useMemo(() => {
+    const map = new Map<number, CollectionRequest>();
+
+    [...requests]
+      .sort((a, b) => b.id - a.id)
+      .forEach((request) => {
+        if (
+          request.status !== "cancelled" &&
+          !map.has(request.bin_id)
+        ) {
+          map.set(request.bin_id, request);
+        }
+      });
+
+    return map;
+  }, [requests]);
+
+  const visibleBins = useMemo<BinWithRequest[]>(
     () =>
-      requests.filter(
-        (request) =>
-          request.status !== "cancelled",
-      ),
-    [requests],
+      bins
+        .filter((bin) => Number(bin.is_active) === 1)
+        .map((bin) => ({
+          ...bin,
+          request: activeRequestsByBin.get(bin.id) || null,
+        }))
+        .sort((a, b) => {
+          const aPriority = needsCollection(a) ? 1 : 0;
+          const bPriority = needsCollection(b) ? 1 : 0;
+          return bPriority - aPriority;
+        }),
+    [bins, activeRequestsByBin],
   );
 
-  const selectedRequest =
-    visibleRequests.find(
-      (request) =>
-        request.id === selectedId,
-    ) || null;
+  const selectedBin =
+    visibleBins.find((bin) => bin.id === selectedId) || null;
 
   useEffect(() => {
-    const markerLayer =
-      markerLayerRef.current;
-
-    if (!markerLayer) {
-      return;
-    }
+    const markerLayer = markerLayerRef.current;
+    if (!markerLayer) return;
 
     markerLayer.clearLayers();
+    const mappedBins = visibleBins.filter(hasCoordinates);
 
-    const mappedRequests =
-      visibleRequests.filter(hasCoordinates);
-
-    mappedRequests.forEach((request) => {
-      const latitude =
-        Number(request.latitude);
-
-      const longitude =
-        Number(request.longitude);
-
-      const marker = L.marker([
-        latitude,
-        longitude,
-      ]).addTo(markerLayer);
+    mappedBins.forEach((bin) => {
+      const marker = L.marker(
+        [Number(bin.latitude), Number(bin.longitude)],
+        { icon: makeMarkerIcon(bin) },
+      ).addTo(markerLayer);
 
       marker.bindPopup(`
-        <div style="min-width: 200px;">
-          <strong>${request.bin_code}</strong>
-          <br />
-          ${request.location_name}
-          <br />
-          ${request.purok_name || "No purok"}
-          <br />
-          Status: ${statusLabel(request.status)}
-          <br />
-          Priority: ${request.priority}
+        <div style="min-width: 210px; line-height: 1.5;">
+          <strong>${bin.bin_code}</strong><br />
+          ${bin.location_name}<br />
+          ${bin.purok_name || "No purok"}<br />
+          Bin status: ${statusLabel(bin.current_status)}<br />
+          Scheduled today: ${
+            isScheduledToday(bin) ? "Yes" : "No"
+          }
         </div>
       `);
 
-      marker.on("click", () => {
-        setSelectedId(request.id);
-      });
+      marker.on("click", () => setSelectedId(bin.id));
     });
 
-    if (!mapRef.current) {
-      return;
-    }
+    if (!mapRef.current) return;
 
-    if (mappedRequests.length > 0) {
+    if (mappedBins.length > 0) {
       const bounds = L.latLngBounds(
-        mappedRequests.map(
-          (request) => [
-            Number(request.latitude),
-            Number(request.longitude),
-          ],
-        ),
+        mappedBins.map((bin) => [
+          Number(bin.latitude),
+          Number(bin.longitude),
+        ]),
       );
 
       mapRef.current.fitBounds(bounds, {
@@ -315,35 +376,70 @@ export default function MapView({
         maxZoom: 17,
       });
     } else {
-      mapRef.current.setView(
-        DEFAULT_CENTER,
-        14,
-      );
+      mapRef.current.setView(DEFAULT_CENTER, 14);
     }
 
-    window.setTimeout(() => {
-      mapRef.current?.invalidateSize();
-    }, 100);
-  }, [visibleRequests]);
+    window.setTimeout(
+      () => mapRef.current?.invalidateSize(),
+      100,
+    );
+  }, [visibleBins]);
+
+  const createTask = async (bin: BinWithRequest) => {
+    if (viewOnly) return;
+
+    setUpdatingId(bin.id);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const priority = priorityForBin(bin);
+      const result = await apiRequest(
+        "/api/collection-requests",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            bin_id: bin.id,
+            priority,
+            reason: isScheduledToday(bin)
+              ? `Scheduled collection for ${
+                  bin.schedule_day || "today"
+                }.`
+              : `${statusLabel(
+                  bin.current_status,
+                )} garbage bin requires collection.`,
+          }),
+        },
+      );
+
+      setSuccessMessage(
+        result.message || "Collection task created.",
+      );
+      await loadData();
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to create collection task.",
+      );
+    } finally {
+      setUpdatingId(null);
+    }
+  };
 
   const updateStatus = async (
-    requestId: number,
-    status:
-      | "assigned"
-      | "in_progress"
-      | "completed",
+    bin: BinWithRequest,
+    status: "assigned" | "in_progress" | "completed",
   ) => {
-    if (viewOnly) {
-      return;
-    }
+    if (viewOnly || !bin.request) return;
 
-    setUpdatingId(requestId);
+    setUpdatingId(bin.id);
     setErrorMessage("");
     setSuccessMessage("");
 
     try {
       const result = await apiRequest(
-        `/api/collection-requests/${requestId}/status`,
+        `/api/collection-requests/${bin.request.id}/status`,
         {
           method: "PATCH",
           body: JSON.stringify({ status }),
@@ -351,35 +447,27 @@ export default function MapView({
       );
 
       setSuccessMessage(
-        result.message ||
-          "Collection request updated.",
+        result.message || "Collection task updated.",
       );
-
-      await loadRequests();
+      await loadData();
     } catch (error) {
       setErrorMessage(
         error instanceof Error
           ? error.message
-          : "Failed to update collection request.",
+          : "Failed to update collection task.",
       );
     } finally {
       setUpdatingId(null);
     }
   };
 
-  const activeCount =
-    visibleRequests.filter(
-      (request) =>
-        !["completed", "cancelled"].includes(
-          request.status,
-        ),
-    ).length;
-
-  const completedCount =
-    visibleRequests.filter(
-      (request) =>
-        request.status === "completed",
-    ).length;
+  const scheduledCount = visibleBins.filter(
+    isScheduledToday,
+  ).length;
+  const needsCollectionCount = visibleBins.filter(
+    needsCollection,
+  ).length;
+  const mappedCount = visibleBins.filter(hasCoordinates).length;
 
   return (
     <div className="space-y-5">
@@ -387,20 +475,17 @@ export default function MapView({
         <div>
           <h1 className="text-3xl font-black text-slate-900">
             {viewOnly
-              ? "Collector Monitoring"
+              ? "Garbage Bin and Collector Monitoring"
               : "Collector Route Map"}
           </h1>
-
           <p className="mt-1 text-sm text-slate-500">
-            {viewOnly
-              ? "Monitor collection requests and collector progress."
-              : "Open a request, start the route, and mark it collected."}
+            All active bins registered by Purok Leaders are shown. Green-ringed bins are scheduled today.
           </p>
         </div>
 
         <button
           type="button"
-          onClick={loadRequests}
+          onClick={loadData}
           className="flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-black text-slate-700"
         >
           <RefreshCw
@@ -425,32 +510,23 @@ export default function MapView({
       )}
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <p className="text-xs font-bold uppercase text-slate-500">
-            Total Requests
-          </p>
-          <p className="mt-1 text-2xl font-black text-slate-900">
-            {visibleRequests.length}
-          </p>
-        </div>
+        <StatCard label="Active Bins" value={visibleBins.length} />
+        <StatCard
+          label="Scheduled Today"
+          value={scheduledCount}
+        />
+        <StatCard
+          label="Needs Collection"
+          value={needsCollectionCount}
+        />
+      </div>
 
-        <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <p className="text-xs font-bold uppercase text-slate-500">
-            Active
-          </p>
-          <p className="mt-1 text-2xl font-black text-amber-600">
-            {activeCount}
-          </p>
-        </div>
-
-        <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <p className="text-xs font-bold uppercase text-slate-500">
-            Completed
-          </p>
-          <p className="mt-1 text-2xl font-black text-emerald-700">
-            {completedCount}
-          </p>
-        </div>
+      <div className="flex flex-wrap gap-3 rounded-2xl border bg-white p-4 text-xs font-bold text-slate-600 shadow-sm">
+        <Legend color="#16a34a" label="Scheduled today" />
+        <Legend color="#dc2626" label="Overflowing" />
+        <Legend color="#f97316" label="Full" />
+        <Legend color="#eab308" label="Half-full" />
+        <Legend color="#2563eb" label="Empty / normal" />
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1.6fr_1fr]">
@@ -462,288 +538,362 @@ export default function MapView({
         </div>
 
         <aside className="rounded-2xl border bg-white p-5 shadow-sm">
-          {!selectedRequest ? (
+          {!selectedBin ? (
             <div className="flex h-full min-h-[420px] flex-col items-center justify-center text-center">
               <Navigation className="mb-3 h-10 w-10 text-emerald-700" />
-
               <h2 className="font-black text-slate-900">
-                Select a collection request
+                Select a garbage bin
               </h2>
-
               <p className="mt-2 max-w-xs text-sm text-slate-500">
-                Click a map marker or choose a request from the queue below.
+                Click a marker or choose a bin from the list below.
               </p>
             </div>
           ) : (
-            <div className="space-y-4">
-              <div>
-                <p className="text-xs font-bold uppercase text-emerald-700">
-                  Active Request
-                </p>
-
-                <h2 className="mt-1 text-xl font-black text-slate-900">
-                  {selectedRequest.bin_code}
-                </h2>
-
-                <p className="mt-1 text-sm text-slate-600">
-                  {selectedRequest.location_name}
-                </p>
-              </div>
-
-              <div className="rounded-xl border bg-slate-50 p-4">
-                <p className="text-xs font-bold uppercase text-slate-500">
-                  Area
-                </p>
-                <p className="mt-1 font-black text-slate-900">
-                  {selectedRequest.purok_name ||
-                    "No purok"}
-                  {selectedRequest.barangay_name
-                    ? `, ${selectedRequest.barangay_name}`
-                    : ""}
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl border p-3">
-                  <p className="text-[10px] font-bold uppercase text-slate-500">
-                    Status
-                  </p>
-                  <p className="mt-1 text-sm font-black text-slate-900">
-                    {statusLabel(
-                      selectedRequest.status,
-                    )}
-                  </p>
-                </div>
-
-                <div className="rounded-xl border p-3">
-                  <p className="text-[10px] font-bold uppercase text-slate-500">
-                    Priority
-                  </p>
-                  <p className="mt-1 text-sm font-black capitalize text-slate-900">
-                    {selectedRequest.priority}
-                  </p>
-                </div>
-              </div>
-
-              <div className="rounded-xl border p-3">
-                <p className="text-[10px] font-bold uppercase text-slate-500">
-                  Reason
-                </p>
-                <p className="mt-1 text-sm text-slate-700">
-                  {selectedRequest.reason ||
-                    "No reason provided."}
-                </p>
-              </div>
-
-              <div className="rounded-xl border p-3">
-                <p className="flex items-center gap-1 text-[10px] font-bold uppercase text-slate-500">
-                  <Clock className="h-3.5 w-3.5" />
-                  Requested
-                </p>
-                <p className="mt-1 text-sm text-slate-700">
-                  {formatDate(
-                    selectedRequest.requested_at ||
-                      selectedRequest.created_at,
-                  )}
-                </p>
-              </div>
-
-              {!viewOnly && (
-                <div className="space-y-2">
-                  {selectedRequest.status ===
-                    "pending" && (
-                    <button
-                      type="button"
-                      disabled={
-                        updatingId ===
-                        selectedRequest.id
-                      }
-                      onClick={() =>
-                        updateStatus(
-                          selectedRequest.id,
-                          "assigned",
-                        )
-                      }
-                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
-                    >
-                      <Truck className="h-4 w-4" />
-                      Accept Request
-                    </button>
-                  )}
-
-                  {[
-                    "approved",
-                    "assigned",
-                  ].includes(
-                    selectedRequest.status,
-                  ) && (
-                    <button
-                      type="button"
-                      disabled={
-                        updatingId ===
-                        selectedRequest.id
-                      }
-                      onClick={() =>
-                        updateStatus(
-                          selectedRequest.id,
-                          "in_progress",
-                        )
-                      }
-                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
-                    >
-                      <Navigation className="h-4 w-4" />
-                      Start Route
-                    </button>
-                  )}
-
-                  {selectedRequest.status ===
-                    "in_progress" && (
-                    <button
-                      type="button"
-                      disabled={
-                        updatingId ===
-                        selectedRequest.id
-                      }
-                      onClick={() =>
-                        updateStatus(
-                          selectedRequest.id,
-                          "completed",
-                        )
-                      }
-                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
-                    >
-                      <CheckCircle2 className="h-4 w-4" />
-                      Mark Collected
-                    </button>
-                  )}
-
-                  {selectedRequest.status ===
-                    "completed" && (
-                    <div className="flex items-center justify-center gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700">
-                      <CheckCircle2 className="h-4 w-4" />
-                      Collection Completed
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {viewOnly && (
-                <div className="rounded-xl bg-slate-100 px-4 py-3 text-center text-sm font-black text-slate-600">
-                  Administrator monitoring only
-                </div>
-              )}
-            </div>
+            <BinDetails
+              bin={selectedBin}
+              busy={updatingId === selectedBin.id}
+              viewOnly={viewOnly}
+              onCreateTask={() => createTask(selectedBin)}
+              onUpdateStatus={(status) =>
+                updateStatus(selectedBin, status)
+              }
+            />
           )}
         </aside>
       </div>
 
       <section className="overflow-hidden rounded-2xl border bg-white shadow-sm">
-        <div className="border-b px-5 py-4">
+        <div className="flex items-center justify-between border-b px-5 py-4">
           <h2 className="font-black text-slate-900">
-            Collection Request Queue
+            Garbage Bin Collection List
           </h2>
+          <span className="text-xs font-bold text-slate-500">
+            {mappedCount} with map coordinates
+          </span>
         </div>
 
         <div className="divide-y">
-          {visibleRequests.map((request) => (
+          {visibleBins.map((bin) => (
             <button
-              key={request.id}
+              key={bin.id}
               type="button"
               onClick={() => {
-                setSelectedId(request.id);
-
-                if (
-                  hasCoordinates(request)
-                ) {
+                setSelectedId(bin.id);
+                if (hasCoordinates(bin)) {
                   mapRef.current?.setView(
                     [
-                      Number(request.latitude),
-                      Number(request.longitude),
+                      Number(bin.latitude),
+                      Number(bin.longitude),
                     ],
                     17,
                   );
                 }
               }}
               className={`flex w-full flex-col gap-3 p-5 text-left transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between ${
-                selectedId === request.id
-                  ? "bg-emerald-50"
-                  : ""
+                selectedId === bin.id ? "bg-emerald-50" : ""
               }`}
             >
               <div className="flex items-start gap-3">
                 <div className="rounded-xl bg-emerald-50 p-2.5 text-emerald-700">
                   <MapPin className="h-5 w-5" />
                 </div>
-
                 <div>
                   <p className="font-black text-slate-900">
-                    {request.bin_code} —{" "}
-                    {request.location_name}
+                    {bin.bin_code} — {bin.location_name}
                   </p>
-
                   <p className="mt-1 text-xs text-slate-500">
-                    {request.purok_name ||
-                      "No purok"}
-                    {request.barangay_name
-                      ? `, ${request.barangay_name}`
+                    {bin.purok_name || "No purok"}
+                    {bin.barangay_name
+                      ? `, ${bin.barangay_name}`
                       : ""}
                   </p>
                 </div>
               </div>
 
               <div className="flex flex-wrap gap-2">
-                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black uppercase text-slate-600">
-                  {statusLabel(
-                    request.status,
-                  )}
-                </span>
-
-                <span
-                  className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${
-                    request.priority ===
-                    "urgent"
-                      ? "bg-rose-100 text-rose-700"
-                      : request.priority ===
-                          "high"
-                        ? "bg-amber-100 text-amber-700"
-                        : "bg-blue-100 text-blue-700"
-                  }`}
-                >
-                  {request.priority}
-                </span>
-
-                {!hasCoordinates(request) && (
-                  <span className="rounded-full bg-rose-100 px-2.5 py-1 text-[10px] font-black uppercase text-rose-700">
-                    No map coordinates
-                  </span>
+                <Badge label={statusLabel(bin.current_status)} />
+                {isScheduledToday(bin) && (
+                  <Badge label="Scheduled today" tone="green" />
+                )}
+                {bin.request && (
+                  <Badge
+                    label={statusLabel(bin.request.status)}
+                    tone="blue"
+                  />
+                )}
+                {!hasCoordinates(bin) && (
+                  <Badge label="No coordinates" tone="red" />
                 )}
               </div>
             </button>
           ))}
 
-          {!loading &&
-            visibleRequests.length === 0 && (
-              <div className="p-10 text-center text-slate-500">
-                <AlertCircle className="mx-auto mb-2 h-8 w-8 text-slate-300" />
-
-                <p className="font-black">
-                  No collection requests found
-                </p>
-
-                <p className="mt-1 text-xs">
-                  Create a collection request first so it can appear on the route map.
-                </p>
-              </div>
-            )}
+          {!loading && visibleBins.length === 0 && (
+            <div className="p-10 text-center text-slate-500">
+              <AlertCircle className="mx-auto mb-2 h-8 w-8 text-slate-300" />
+              <p className="font-black">No garbage bins found</p>
+              <p className="mt-1 text-xs">
+                A Purok Leader must register a garbage bin first.
+              </p>
+            </div>
+          )}
 
           {loading && (
             <div className="p-10 text-center text-slate-500">
               <RefreshCw className="mx-auto mb-2 h-6 w-6 animate-spin" />
-              Loading route data...
+              Loading garbage bins...
             </div>
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+}: {
+  label: string;
+  value: number;
+}) {
+  return (
+    <div className="rounded-2xl border bg-white p-4 shadow-sm">
+      <p className="text-xs font-bold uppercase text-slate-500">
+        {label}
+      </p>
+      <p className="mt-1 text-2xl font-black text-slate-900">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function Legend({
+  color,
+  label,
+}: {
+  color: string;
+  label: string;
+}) {
+  return (
+    <span className="flex items-center gap-2">
+      <span
+        className="h-3 w-3 rounded-full"
+        style={{ backgroundColor: color }}
+      />
+      {label}
+    </span>
+  );
+}
+
+function Badge({
+  label,
+  tone = "gray",
+}: {
+  label: string;
+  tone?: "gray" | "green" | "blue" | "red";
+}) {
+  const className = {
+    gray: "bg-slate-100 text-slate-600",
+    green: "bg-emerald-100 text-emerald-700",
+    blue: "bg-blue-100 text-blue-700",
+    red: "bg-rose-100 text-rose-700",
+  }[tone];
+
+  return (
+    <span
+      className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${className}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function BinDetails({
+  bin,
+  busy,
+  viewOnly,
+  onCreateTask,
+  onUpdateStatus,
+}: {
+  bin: BinWithRequest;
+  busy: boolean;
+  viewOnly: boolean;
+  onCreateTask: () => void;
+  onUpdateStatus: (
+    status: "assigned" | "in_progress" | "completed",
+  ) => void;
+}) {
+  const request = bin.request;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="text-xs font-bold uppercase text-emerald-700">
+          Selected Garbage Bin
+        </p>
+        <h2 className="mt-1 text-xl font-black text-slate-900">
+          {bin.bin_code}
+        </h2>
+        <p className="mt-1 text-sm text-slate-600">
+          {bin.location_name}
+        </p>
+      </div>
+
+      <div className="rounded-xl border bg-slate-50 p-4">
+        <p className="text-xs font-bold uppercase text-slate-500">
+          Area
+        </p>
+        <p className="mt-1 font-black text-slate-900">
+          {bin.purok_name || "No purok"}
+          {bin.barangay_name ? `, ${bin.barangay_name}` : ""}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <InfoCard
+          label="Bin Status"
+          value={statusLabel(bin.current_status)}
+        />
+        <InfoCard
+          label="Condition"
+          value={statusLabel(bin.condition_status || "good")}
+        />
+      </div>
+
+      <div className="rounded-xl border p-3">
+        <p className="flex items-center gap-1 text-[10px] font-bold uppercase text-slate-500">
+          <CalendarDays className="h-3.5 w-3.5" />
+          Collection Schedule
+        </p>
+        <p className="mt-1 text-sm font-black text-slate-800">
+          {isScheduledToday(bin)
+            ? `${bin.schedule_day || "Today"}${
+                bin.schedule_start_time
+                  ? ` • ${bin.schedule_start_time}`
+                  : ""
+              }`
+            : "Not scheduled today"}
+        </p>
+        {bin.schedule_notes && (
+          <p className="mt-1 text-xs text-slate-500">
+            {bin.schedule_notes}
+          </p>
+        )}
+      </div>
+
+      <div className="rounded-xl border p-3">
+        <p className="flex items-center gap-1 text-[10px] font-bold uppercase text-slate-500">
+          <Clock className="h-3.5 w-3.5" />
+          Last Inspection
+        </p>
+        <p className="mt-1 text-sm text-slate-700">
+          {formatDate(bin.last_inspected_at)}
+        </p>
+      </div>
+
+      {request && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
+          <p className="text-[10px] font-bold uppercase text-blue-600">
+            Collection Task
+          </p>
+          <p className="mt-1 text-sm font-black text-blue-900">
+            {statusLabel(request.status)} • {request.priority}
+          </p>
+        </div>
+      )}
+
+      {!viewOnly && (
+        <div className="space-y-2">
+          {!request && needsCollection(bin) && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onCreateTask}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
+            >
+              <Truck className="h-4 w-4" />
+              Create Collection Task
+            </button>
+          )}
+
+          {!request && !needsCollection(bin) && (
+            <div className="rounded-xl bg-slate-100 px-4 py-3 text-center text-sm font-black text-slate-600">
+              This bin does not require collection today
+            </div>
+          )}
+
+          {request?.status === "pending" && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onUpdateStatus("assigned")}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
+            >
+              <Truck className="h-4 w-4" />
+              Accept Task
+            </button>
+          )}
+
+          {request &&
+            ["approved", "assigned"].includes(request.status) && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onUpdateStatus("in_progress")}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
+              >
+                <Navigation className="h-4 w-4" />
+                Start Route
+              </button>
+            )}
+
+          {request?.status === "in_progress" && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onUpdateStatus("completed")}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Mark Collected
+            </button>
+          )}
+
+          {request?.status === "completed" && (
+            <div className="flex items-center justify-center gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700">
+              <CheckCircle2 className="h-4 w-4" />
+              Collection Completed
+            </div>
+          )}
+        </div>
+      )}
+
+      {viewOnly && (
+        <div className="rounded-xl bg-slate-100 px-4 py-3 text-center text-sm font-black text-slate-600">
+          Administrator monitoring only
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InfoCard({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl border p-3">
+      <p className="text-[10px] font-bold uppercase text-slate-500">
+        {label}
+      </p>
+      <p className="mt-1 text-sm font-black text-slate-900">
+        {value}
+      </p>
     </div>
   );
 }

@@ -93,7 +93,18 @@ router.get(
           p.name AS purok_name,
 
           b.id AS barangay_id,
-          b.name AS barangay_name
+          b.name AS barangay_name,
+
+          sched.day_of_week AS schedule_day,
+          sched.start_time AS schedule_start_time,
+          sched.end_time AS schedule_end_time,
+          sched.notes AS schedule_notes,
+
+          CASE
+            WHEN sched.day_of_week = DAYNAME(CURDATE())
+            THEN 1
+            ELSE 0
+          END AS is_scheduled_today
 
         FROM garbage_bins gb
 
@@ -102,6 +113,10 @@ router.get(
 
         LEFT JOIN barangays b
           ON b.id = p.barangay_id
+
+        LEFT JOIN barangay_collection_schedules sched
+          ON sched.barangay_id = b.id
+         AND sched.is_active = 1
       `;
 
       const parameters: number[] = [];

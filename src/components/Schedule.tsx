@@ -1,6 +1,6 @@
 import { Calendar as CalendarIcon, Clock, ChevronRight, Truck, Camera, X } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 export default function Schedule() {
   const { 
@@ -13,6 +13,71 @@ export default function Schedule() {
   } = useAppState();
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
   const [selectedSchedule, setSelectedSchedule] = useState<any>(null);
+
+  const today = new Date();
+  const [visibleMonth, setVisibleMonth] = useState(
+    () => new Date(today.getFullYear(), today.getMonth(), 1)
+  );
+
+  const calendarDays = useMemo(() => {
+    const year = visibleMonth.getFullYear();
+    const month = visibleMonth.getMonth();
+    const firstDay = new Date(year, month, 1).getDay();
+    const totalDays = new Date(year, month + 1, 0).getDate();
+
+    const cells: Array<number | null> = [];
+
+    for (let index = 0; index < firstDay; index += 1) {
+      cells.push(null);
+    }
+
+    for (let day = 1; day <= totalDays; day += 1) {
+      cells.push(day);
+    }
+
+    while (cells.length % 7 !== 0) {
+      cells.push(null);
+    }
+
+    return cells;
+  }, [visibleMonth]);
+
+  const isToday = (day: number) =>
+    today.getFullYear() === visibleMonth.getFullYear() &&
+    today.getMonth() === visibleMonth.getMonth() &&
+    today.getDate() === day;
+
+  const hasScheduleOnDay = (day: number) =>
+    schedulesToDisplay.some((item) => {
+      const parsed = new Date(item.date);
+
+      return (
+        !Number.isNaN(parsed.getTime()) &&
+        parsed.getFullYear() === visibleMonth.getFullYear() &&
+        parsed.getMonth() === visibleMonth.getMonth() &&
+        parsed.getDate() === day
+      );
+    });
+
+  const goToPreviousMonth = () => {
+    setVisibleMonth(
+      new Date(
+        visibleMonth.getFullYear(),
+        visibleMonth.getMonth() - 1,
+        1
+      )
+    );
+  };
+
+  const goToNextMonth = () => {
+    setVisibleMonth(
+      new Date(
+        visibleMonth.getFullYear(),
+        visibleMonth.getMonth() + 1,
+        1
+      )
+    );
+  };
 
   const activeUser = currentUser || userProfile;
   const displayZone = activeUser?.communalZone || 'Purok 4 communal zone';
@@ -27,34 +92,74 @@ export default function Schedule() {
       </header>
 
 
-      {/* Mini Calendar Mock */}
+      {/* Dynamic calendar */}
       <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm overflow-hidden mb-6">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="font-bold text-slate-900 text-sm">October 2026</h3>
+          <h3 className="font-bold text-slate-900 text-sm">
+            {visibleMonth.toLocaleDateString('en-US', {
+              month: 'long',
+              year: 'numeric',
+            })}
+          </h3>
+
           <div className="flex gap-2">
-            <button className="w-8 h-8 rounded-full border border-slate-100 flex items-center justify-center text-slate-400">
+            <button
+              type="button"
+              onClick={goToPreviousMonth}
+              className="w-8 h-8 rounded-full border border-slate-100 flex items-center justify-center text-slate-400 hover:bg-slate-50"
+              aria-label="Previous month"
+            >
               <ChevronRight className="w-4 h-4 rotate-180" />
             </button>
-            <button className="w-8 h-8 rounded-full border border-slate-100 flex items-center justify-center text-slate-400">
+
+            <button
+              type="button"
+              onClick={goToNextMonth}
+              className="w-8 h-8 rounded-full border border-slate-100 flex items-center justify-center text-slate-400 hover:bg-slate-50"
+              aria-label="Next month"
+            >
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
         </div>
+
         <div className="grid grid-cols-7 gap-2">
           {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => (
-            <div key={i} className="text-center text-[10px] font-bold text-slate-300 py-1">{day}</div>
-          ))}
-          {[...Array(31)].map((_, i) => (
-            <div 
-              key={i} 
-              className={`text-center py-2 text-xs rounded-xl font-medium cursor-pointer transition-colors ${
-                i + 1 === 24 ? 'bg-emerald-500 text-white font-bold' : 
-                [24, 25, 27].includes(i + 1) ? 'bg-emerald-50 text-emerald-600' : 'text-slate-600 hover:bg-slate-50'
-              }`}
+            <div
+              key={`${day}-${i}`}
+              className="text-center text-[10px] font-bold text-slate-300 py-1"
             >
-              {i + 1}
+              {day}
             </div>
           ))}
+
+          {calendarDays.map((day, index) => {
+            if (day === null) {
+              return <div key={`empty-${index}`} className="py-2" />;
+            }
+
+            const todayCell = isToday(day);
+            const scheduledCell = hasScheduleOnDay(day);
+
+            return (
+              <div
+                key={`${visibleMonth.getFullYear()}-${visibleMonth.getMonth()}-${day}`}
+                className={`relative text-center py-2 text-xs rounded-xl font-medium transition-colors ${
+                  todayCell
+                    ? 'bg-emerald-500 text-white font-bold shadow-sm ring-2 ring-emerald-100'
+                    : scheduledCell
+                      ? 'bg-emerald-50 text-emerald-700 font-bold'
+                      : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {day}
+
+                {scheduledCell && !todayCell && (
+                  <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 

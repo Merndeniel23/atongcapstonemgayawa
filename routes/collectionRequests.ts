@@ -16,8 +16,7 @@ const allowedStatuses = [
   "cancelled",
 ] as const;
 
-type CollectionStatus =
-  (typeof allowedStatuses)[number];
+type CollectionStatus = (typeof allowedStatuses)[number];
 
 function canViewRequests(role?: string): boolean {
   return (
@@ -28,18 +27,6 @@ function canViewRequests(role?: string): boolean {
   );
 }
 
-/**
- * GET /api/collection-requests
- *
- * Admin:
- * - sees all requests
- *
- * Collector:
- * - sees unassigned requests and requests assigned to them
- *
- * Purok Leader:
- * - sees requests from bins inside their assigned purok
- */
 router.get(
   "/",
   requireAuth,
@@ -82,21 +69,11 @@ router.get(
           collector.full_name AS assigned_collector_name
 
         FROM collection_requests cr
-
-        INNER JOIN garbage_bins gb
-          ON gb.id = cr.bin_id
-
-        LEFT JOIN puroks p
-          ON p.id = gb.purok_id
-
-        LEFT JOIN barangays b
-          ON b.id = p.barangay_id
-
-        LEFT JOIN users requester
-          ON requester.id = cr.requested_by
-
-        LEFT JOIN users collector
-          ON collector.id = cr.assigned_collector_id
+        INNER JOIN garbage_bins gb ON gb.id = cr.bin_id
+        LEFT JOIN puroks p ON p.id = gb.purok_id
+        LEFT JOIN barangays b ON b.id = p.barangay_id
+        LEFT JOIN users requester ON requester.id = cr.requested_by
+        LEFT JOIN users collector ON collector.id = cr.assigned_collector_id
       `;
 
       const params: number[] = [];
@@ -120,61 +97,34 @@ router.get(
           });
         }
 
-        sql += `
-          WHERE gb.purok_id = ?
-        `;
+        sql += ` WHERE gb.purok_id = ? `;
         params.push(req.user.purok_id);
       }
 
       sql += `
         ORDER BY
-          FIELD(
-            cr.priority,
-            'urgent',
-            'high',
-            'normal',
-            'low'
-          ),
+          FIELD(cr.priority, 'urgent', 'high', 'normal', 'low'),
           cr.requested_at DESC,
           cr.id DESC
       `;
 
-      const [rows] = await db.query<any[]>(
-        sql,
-        params,
-      );
+      const [rows] = await db.query<any[]>(sql, params);
 
       return res.json({
         success: true,
         requests: rows,
       });
     } catch (error) {
-      console.error(
-        "Load collection requests error:",
-        error,
-      );
+      console.error("Load collection requests error:", error);
 
       return res.status(500).json({
         success: false,
-        message:
-          "Failed to load collection requests.",
+        message: "Failed to load collection requests.",
       });
     }
   },
 );
 
-/**
- * POST /api/collection-requests
- *
- * Used by a Purok Leader or resident to create a request.
- * Body:
- * {
- *   bin_id,
- *   inspection_id?,
- *   priority?,
- *   reason?
- * }
- */
 router.post(
   "/",
   requireAuth,
@@ -187,23 +137,15 @@ router.post(
         req.body.inspection_id === ""
           ? null
           : Number(req.body.inspection_id);
-
       const priority = String(
         req.body.priority || "normal",
       ).toLowerCase();
+      const reason = String(req.body.reason || "").trim();
 
-      const reason = String(
-        req.body.reason || "",
-      ).trim();
-
-      if (
-        !Number.isInteger(binId) ||
-        binId <= 0
-      ) {
+      if (!Number.isInteger(binId) || binId <= 0) {
         return res.status(400).json({
           success: false,
-          message:
-            "A valid garbage bin is required.",
+          message: "A valid garbage bin is required.",
         });
       }
 
@@ -223,8 +165,7 @@ router.post(
         `
         SELECT id, purok_id
         FROM garbage_bins
-        WHERE id = ?
-          AND is_active = 1
+        WHERE id = ? AND is_active = 1
         LIMIT 1
         `,
         [binId],
@@ -235,16 +176,14 @@ router.post(
       if (!bin) {
         return res.status(404).json({
           success: false,
-          message:
-            "Garbage bin was not found.",
+          message: "Garbage bin was not found.",
         });
       }
 
       if (
         (req.user?.role === "purok_leader" ||
           req.user?.role === "leader") &&
-        Number(req.user.purok_id) !==
-          Number(bin.purok_id)
+        Number(req.user.purok_id) !== Number(bin.purok_id)
       ) {
         return res.status(403).json({
           success: false,
@@ -253,75 +192,78 @@ router.post(
         });
       }
 
-      const [result]: any =
-        await db.execute(
-          `
-          INSERT INTO collection_requests (
-            bin_id,
-            inspection_id,
-            requested_by,
-            priority,
-            status,
-            reason,
-            requested_at
-          )
-          VALUES (?, ?, ?, ?, 'pending', ?, NOW())
-          `,
-          [
-            binId,
-            inspectionId,
-            req.user!.id,
-            priority,
-            reason || null,
-          ],
-        );
+      const [existingRows] = await db.query<any[]>(
+        `
+        SELECT id, status
+        FROM collection_requests
+        WHERE bin_id = ?
+          AND status IN ('pending', 'approved', 'assigned', 'in_progress')
+        ORDER BY id DESC
+        LIMIT 1
+        `,
+        [binId],
+      );
+
+      if (existingRows.length > 0) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "This garbage bin already has an active collection task.",
+          requestId: existingRows[0].id,
+        });
+      }
+
+      const [result]: any = await db.execute(
+        `
+        INSERT INTO collection_requests (
+          bin_id,
+          inspection_id,
+          requested_by,
+          priority,
+          status,
+          reason,
+          requested_at
+        )
+        VALUES (?, ?, ?, ?, 'pending', ?, NOW())
+        `,
+        [
+          binId,
+          inspectionId,
+          req.user!.id,
+          priority,
+          reason || null,
+        ],
+      );
 
       return res.status(201).json({
         success: true,
-        message:
-          "Collection request created successfully.",
+        message: "Collection task created successfully.",
         requestId: result.insertId,
       });
     } catch (error) {
-      console.error(
-        "Create collection request error:",
-        error,
-      );
+      console.error("Create collection request error:", error);
 
       return res.status(500).json({
         success: false,
-        message:
-          "Failed to create collection request.",
+        message: "Failed to create collection request.",
       });
     }
   },
 );
 
-/**
- * PATCH /api/collection-requests/:id/status
- *
- * Collector:
- * - assigned
- * - in_progress
- * - completed
- *
- * Admin:
- * - any allowed status
- */
 router.patch(
   "/:id/status",
   requireAuth,
   async (req: AuthRequest, res) => {
+    const connection = await db.getConnection();
+
     try {
       const requestId = Number(req.params.id);
       const nextStatus = String(
         req.body.status || "",
       ).toLowerCase() as CollectionStatus;
 
-      if (
-        !Number.isInteger(requestId) ||
-        requestId <= 0
-      ) {
+      if (!Number.isInteger(requestId) || requestId <= 0) {
         return res.status(400).json({
           success: false,
           message:
@@ -329,13 +271,10 @@ router.patch(
         });
       }
 
-      if (
-        !allowedStatuses.includes(nextStatus)
-      ) {
+      if (!allowedStatuses.includes(nextStatus)) {
         return res.status(400).json({
           success: false,
-          message:
-            "Invalid collection request status.",
+          message: "Invalid collection request status.",
         });
       }
 
@@ -350,27 +289,26 @@ router.patch(
         });
       }
 
-      const [requestRows] =
-        await db.query<any[]>(
-          `
-          SELECT
-            id,
-            status,
-            assigned_collector_id
-          FROM collection_requests
-          WHERE id = ?
-          LIMIT 1
-          `,
-          [requestId],
-        );
+      await connection.beginTransaction();
+
+      const [requestRows] = await connection.query<any[]>(
+        `
+        SELECT id, bin_id, status, assigned_collector_id
+        FROM collection_requests
+        WHERE id = ?
+        LIMIT 1
+        FOR UPDATE
+        `,
+        [requestId],
+      );
 
       const request = requestRows[0];
 
       if (!request) {
+        await connection.rollback();
         return res.status(404).json({
           success: false,
-          message:
-            "Collection request was not found.",
+          message: "Collection request was not found.",
         });
       }
 
@@ -380,6 +318,7 @@ router.patch(
         Number(request.assigned_collector_id) !==
           Number(req.user.id)
       ) {
+        await connection.rollback();
         return res.status(403).json({
           success: false,
           message:
@@ -392,36 +331,53 @@ router.patch(
           ? req.user.id
           : request.assigned_collector_id;
 
-      const completedAt =
-        nextStatus === "completed"
-          ? new Date()
-          : null;
-
-      await db.execute(
+      await connection.execute(
         `
         UPDATE collection_requests
         SET
           status = ?,
           assigned_collector_id = ?,
-          completed_at = ?
+          completed_at = CASE
+            WHEN ? = 'completed' THEN NOW()
+            ELSE NULL
+          END
         WHERE id = ?
         `,
         [
           nextStatus,
           assignedCollectorId || null,
-          completedAt,
+          nextStatus,
           requestId,
         ],
       );
+
+      if (nextStatus === "completed") {
+        await connection.execute(
+          `
+          UPDATE garbage_bins
+          SET
+            current_status = 'empty',
+            condition_status = CASE
+              WHEN condition_status = 'damaged' THEN condition_status
+              ELSE 'good'
+            END
+          WHERE id = ?
+          `,
+          [request.bin_id],
+        );
+      }
+
+      await connection.commit();
 
       return res.json({
         success: true,
         message:
           nextStatus === "completed"
-            ? "Collection completed successfully."
+            ? "Collection completed and the bin was reset to empty."
             : "Collection request status updated.",
       });
     } catch (error) {
+      await connection.rollback();
       console.error(
         "Update collection request status error:",
         error,
@@ -432,6 +388,8 @@ router.patch(
         message:
           "Failed to update collection request status.",
       });
+    } finally {
+      connection.release();
     }
   },
 );
