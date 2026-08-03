@@ -35,7 +35,6 @@ interface InspectionRecord {
 
 interface InspectionForm {
   binId: string;
-  purokLeaderId: string;
   status: DatabaseStatus;
   estimatedFillLevel: string;
   remarks: string;
@@ -44,9 +43,46 @@ interface InspectionForm {
 
 const API_URL = 'http://localhost:3001/api/inspections';
 
+function getToken(): string {
+  return (
+    localStorage.getItem('token') ||
+    localStorage.getItem('authToken') ||
+    ''
+  );
+}
+
+async function apiRequest(
+  url: string,
+  options: RequestInit = {},
+) {
+  const token = getToken();
+
+  if (!token) {
+    throw new Error(
+      'Your login session is missing. Please log out and log in again.',
+    );
+  }
+
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...(options.headers || {}),
+    },
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.message || 'Request failed.');
+  }
+
+  return data;
+}
+
 const defaultForm: InspectionForm = {
   binId: '',
-  purokLeaderId: '',
   status: 'half_full',
   estimatedFillLevel: '50',
   remarks: '',
@@ -85,17 +121,22 @@ export default function BinInspections() {
     setError('');
 
     try {
-      const response = await fetch(API_URL);
-      const data = await response.json();
+      const data = await apiRequest(API_URL);
 
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to load inspections.');
-      }
-
-      setInspections(Array.isArray(data) ? data : []);
+      setInspections(
+        Array.isArray(data)
+          ? data
+          : Array.isArray(data.inspections)
+            ? data.inspections
+            : [],
+      );
     } catch (err) {
       console.error(err);
-      setError('Cannot load inspections. Check if the backend is running.');
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Cannot load inspections.',
+      );
     } finally {
       setLoading(false);
     }
@@ -134,16 +175,10 @@ export default function BinInspections() {
     setSuccessMessage('');
 
     const binId = Number(form.binId);
-    const purokLeaderId = Number(form.purokLeaderId);
     const estimatedFillLevel = Number(form.estimatedFillLevel);
 
     if (!Number.isInteger(binId) || binId <= 0) {
       setError('Please enter a valid numeric Bin ID.');
-      return;
-    }
-
-    if (!Number.isInteger(purokLeaderId) || purokLeaderId <= 0) {
-      setError('Please enter a valid Purok Leader user ID.');
       return;
     }
 
@@ -159,26 +194,16 @@ export default function BinInspections() {
     setSubmitting(true);
 
     try {
-      const response = await fetch(API_URL, {
+      const data = await apiRequest(API_URL, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
           bin_id: binId,
-          purok_leader_id: purokLeaderId,
           status: form.status,
           estimated_fill_level: estimatedFillLevel,
           remarks: form.remarks.trim() || null,
           photo_path: form.photoPath.trim() || null,
         }),
       });
-
-      const data = await response.json();
-
-      if (!response.ok || data.success === false) {
-        throw new Error(data.message || 'Failed to save inspection.');
-      }
 
       setSuccessMessage(
         data.message || 'Inspection saved successfully.',
@@ -339,8 +364,7 @@ export default function BinInspections() {
             </h2>
 
             <p className="text-xs text-slate-500 mt-1">
-              Use the numeric IDs stored in the garbage_bins and users
-              tables.
+              Your Purok Leader account is detected automatically from your login token.
             </p>
           </div>
 
@@ -358,25 +382,6 @@ export default function BinInspections() {
                   setForm((previous) => ({
                     ...previous,
                     binId: event.target.value,
-                  }))
-                }
-                className="mt-2 w-full p-3 rounded-xl border border-slate-200"
-              />
-            </label>
-
-            <label className="text-xs font-bold text-slate-600">
-              Purok Leader User ID
-
-              <input
-                type="number"
-                min="1"
-                required
-                placeholder="Example: 2"
-                value={form.purokLeaderId}
-                onChange={(event) =>
-                  setForm((previous) => ({
-                    ...previous,
-                    purokLeaderId: event.target.value,
                   }))
                 }
                 className="mt-2 w-full p-3 rounded-xl border border-slate-200"

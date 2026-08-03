@@ -1,131 +1,376 @@
 import {
-  ClipboardCheck,
-  LayoutDashboard,
-  Calendar,
-  MessageSquare,
-  CreditCard,
+  Award,
   Bell,
-  User,
+  Building2,
+  Calendar,
+  ClipboardCheck,
+  ClipboardList,
+  CreditCard,
+  KeyRound,
+  LayoutDashboard,
   LogOut,
   Map,
-  Truck,
-  ClipboardList,
-  Shield,
-  Settings,
-  Users,
-  Award,
   MapPinned,
-} from 'lucide-react';
-import { useAppState } from '../context/AppStateContext';
+  MessageSquare,
+  Settings,
+  Shield,
+  Truck,
+  User,
+  UserCog,
+  Users,
+} from "lucide-react";
+import {
+  useAppState,
+  type AppRole,
+} from "../context/AppStateContext";
 
 interface SidebarProps {
   activeTab: string;
   onTabChange: (tab: any) => void;
   onLogout: () => void;
-  role: 'household' | 'collector' | 'leader' | 'admin';
+  role: AppRole;
 }
 
-export default function Sidebar({ activeTab, onTabChange, onLogout, role }: SidebarProps) {
-  const { userProfile, currentUser, notifications } = useAppState();
-  const activeUser = currentUser || userProfile;
-  const username = activeUser?.name || 'demo_resident';
+interface MenuItem {
+  id: string;
+  icon: any;
+  label: string;
+  count?: number;
+}
 
-  // Calculate dynamic unread notification count
-  const unreadCount = notifications.filter(n => !n.readBy.includes(username)).length;
+export default function Sidebar({
+  activeTab,
+  onTabChange,
+  onLogout,
+  role,
+}: SidebarProps) {
+  const {
+    userProfile,
+    currentUser,
+    notifications,
+  } = useAppState();
 
-  const householdItems = [
-    { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { id: 'schedule', icon: Calendar, label: 'Schedule' },
-    { id: 'complaints', icon: MessageSquare, label: 'Complaints' },
-    { id: 'payments', icon: CreditCard, label: 'Payments' },
-    { id: 'endorsements', icon: Award, label: 'Endorsements' },
-    { id: 'notifications', icon: Bell, label: 'Notifications', count: unreadCount },
-    { id: 'profile', icon: User, label: 'Profile' },
-  ];
+  const activeUser =
+    currentUser || userProfile;
 
-  const collectorItems = [
-    { id: 'collector-tasks', icon: ClipboardList, label: 'Collection Tasks' },
-    { id: 'route-map', icon: Map, label: 'Route Map' },
-    { id: 'schedule', icon: Truck, label: 'Pickup Log' },
-    { id: 'notifications', icon: Bell, label: 'Alerts', count: unreadCount },
-    { id: 'profile', icon: User, label: 'Profile' },
-  ];
+  const username =
+    activeUser?.name ||
+    "System User";
 
-  const leaderItems = [
-    { id: 'leader-dashboard', icon: LayoutDashboard, label: 'Leader HUD' },
-    { id: 'garbage-bins', icon: MapPinned, label: 'Garbage Bins' },
-    { id: 'bin-inspections', icon: ClipboardCheck, label: 'Bin Inspections' },
-    { id: 'members-list', icon: User, label: 'Purok Members' },
-    { id: 'endorsements', icon: Award, label: 'Endorsements' },
-    { id: 'payments', icon: CreditCard, label: 'Verify Payments' },
-    { id: 'complaints', icon: MessageSquare, label: 'Complaints & Tickets' },
-    { id: 'schedule', icon: Calendar, label: 'Waste Logs' },
-    { id: 'notifications', icon: Bell, label: 'System Alerts', count: unreadCount },
-    { id: 'profile', icon: User, label: 'Profile' },
-  ];
+  const unreadCount =
+    notifications.filter(
+      (notification) =>
+        !notification.readBy.includes(
+          username,
+        ),
+    ).length;
 
-  const adminItems = [
-    { id: 'admin-dashboard', icon: Shield, label: 'Admin Panel' },
-    { id: 'garbage-bins', icon: MapPinned, label: 'Garbage Bins' },
-    { id: 'bin-inspections', icon: ClipboardCheck, label: 'Inspection Records' },
-    { id: 'user-management', icon: Users, label: 'Manage Users' },
-    { id: 'endorsements', icon: Award, label: 'Endorsements' },
-    { id: 'payments', icon: CreditCard, label: 'Ledger Audit' },
-    { id: 'complaints', icon: MessageSquare, label: 'Complaints & Tickets' },
+  const householdItems: MenuItem[] = [
     {
-      id: 'notifications',
+      id: "dashboard",
+      icon: LayoutDashboard,
+      label: "Dashboard",
+    },
+    {
+      id: "schedule",
+      icon: Calendar,
+      label: "Schedule",
+    },
+    {
+      id: "complaints",
+      icon: MessageSquare,
+      label: "Complaints",
+    },
+    {
+      id: "payments",
+      icon: CreditCard,
+      label: "Payments",
+    },
+    {
+      id: "endorsements",
+      icon: Award,
+      label: "Endorsements",
+    },
+    {
+      id: "notifications",
       icon: Bell,
-      label: 'Global Alerts',
+      label: "Notifications",
       count: unreadCount,
     },
-    { id: 'profile', icon: Settings, label: 'Control Center' },
+    {
+      id: "profile",
+      icon: User,
+      label: "Profile",
+    },
   ];
-  const menuItems = role === 'collector' ? collectorItems : role === 'leader' ? leaderItems : role === 'admin' ? adminItems : householdItems;
 
-  const getRoleLabel = () => {
+  const collectorItems: MenuItem[] = [
+    {
+      id: "collector-tasks",
+      icon: ClipboardList,
+      label: "Collection Tasks",
+    },
+    {
+      id: "complaints",
+      icon: MessageSquare,
+      label: "Assigned Complaints",
+    },
+    {
+      id: "route-map",
+      icon: Map,
+      label: "Route Map",
+    },
+    {
+      id: "schedule",
+      icon: Truck,
+      label: "Pickup Log",
+    },
+    {
+      id: "notifications",
+      icon: Bell,
+      label: "Alerts",
+      count: unreadCount,
+    },
+    {
+      id: "profile",
+      icon: User,
+      label: "Profile",
+    },
+  ];
+
+  const leaderItems: MenuItem[] = [
+    {
+      id: "leader-dashboard",
+      icon: LayoutDashboard,
+      label: "Leader Dashboard",
+    },
+    {
+      id: "garbage-bins",
+      icon: MapPinned,
+      label: "Garbage Bins",
+    },
+    {
+      id: "bin-inspections",
+      icon: ClipboardCheck,
+      label: "Bin Inspections",
+    },
+    {
+      id: "members-list",
+      icon: Users,
+      label: "Purok Members",
+    },
+    {
+      id: "complaints",
+      icon: MessageSquare,
+      label: "Complaints & Tickets",
+    },
+    {
+      id: "endorsements",
+      icon: Award,
+      label: "Endorsements",
+    },
+    {
+      id: "payments",
+      icon: CreditCard,
+      label: "Verify Payments",
+    },
+    {
+      id: "schedule",
+      icon: Calendar,
+      label: "Waste Logs",
+    },
+    {
+      id: "notifications",
+      icon: Bell,
+      label: "System Alerts",
+      count: unreadCount,
+    },
+    {
+      id: "profile",
+      icon: User,
+      label: "Profile",
+    },
+  ];
+
+  const adminItems: MenuItem[] = [
+    {
+      id: "admin-dashboard",
+      icon: Shield,
+      label: "Barangay Dashboard",
+    },
+    {
+      id: "garbage-bins",
+      icon: MapPinned,
+      label: "Garbage Bins",
+    },
+    {
+      id: "bin-inspections",
+      icon: ClipboardCheck,
+      label: "Inspection Records",
+    },
+    {
+      id: "user-management",
+      icon: Users,
+      label: "Manage Users",
+    },
+    {
+      id: "complaints",
+      icon: MessageSquare,
+      label: "Complaints & Tickets",
+    },
+    {
+      id: "endorsements",
+      icon: Award,
+      label: "Endorsements",
+    },
+    {
+      id: "payments",
+      icon: CreditCard,
+      label: "Ledger Audit",
+    },
+    {
+      id: "notifications",
+      icon: Bell,
+      label: "Barangay Alerts",
+      count: unreadCount,
+    },
+    {
+      id: "profile",
+      icon: Settings,
+      label: "Control Center",
+    },
+  ];
+
+  const superAdminItems: MenuItem[] = [
+    {
+      id: "super-admin-dashboard",
+      icon: LayoutDashboard,
+      label: "Municipal Dashboard",
+    },
+    {
+      id: "user-management",
+      icon: UserCog,
+      label: "Barangay Captains",
+    },
+    {
+      id: "members-list",
+      icon: Users,
+      label: "User Directory",
+    },
+    {
+      id: "garbage-bins",
+      icon: MapPinned,
+      label: "Municipal Bins",
+    },
+    {
+      id: "complaints",
+      icon: MessageSquare,
+      label: "All Complaints",
+    },
+    {
+      id: "notifications",
+      icon: Bell,
+      label: "Municipal Alerts",
+      count: unreadCount,
+    },
+    {
+      id: "profile",
+      icon: KeyRound,
+      label: "Recovery & Security",
+    },
+  ];
+
+  const menuItems =
+    role === "super_admin"
+      ? superAdminItems
+      : role === "admin"
+        ? adminItems
+        : role === "leader"
+          ? leaderItems
+          : role === "collector"
+            ? collectorItems
+            : householdItems;
+
+  const roleLabel = (() => {
     switch (role) {
-      case 'household': return 'Household';
-      case 'collector': return 'Collector';
-      case 'leader': return 'Leader';
-      case 'admin': return 'Admin';
-      default: return 'User';
+      case "super_admin":
+        return "Municipal Administrator";
+      case "admin":
+        return "Barangay Captain";
+      case "leader":
+        return "Purok Leader";
+      case "collector":
+        return "Garbage Collector";
+      default:
+        return "Civilian";
     }
-  };
+  })();
+
+  const RoleIcon =
+    role === "super_admin"
+      ? Building2
+      : role === "admin"
+        ? Shield
+        : role === "leader"
+          ? Award
+          : role === "collector"
+            ? Truck
+            : User;
 
   return (
-    <aside className="hidden md:flex flex-col w-64 bg-[#14532d] text-white h-screen sticky top-0 shrink-0 shadow-xl z-20 transition-all duration-300">
-      <div className="p-6 flex items-center gap-3 mb-8 border-b border-white/10">
-        <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center shrink-0 shadow-inner">
-          <User className="w-5 h-5 text-emerald-100" />
+    <aside className="sticky top-0 z-20 hidden h-screen w-64 shrink-0 flex-col bg-[#14532d] text-white shadow-xl transition-all duration-300 md:flex">
+      <div className="mb-6 flex items-center gap-3 border-b border-white/10 p-6">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/15 shadow-inner">
+          <RoleIcon className="h-5 w-5 text-emerald-100" />
         </div>
+
         <div className="min-w-0">
-          <p className="text-[10px] font-black uppercase tracking-widest text-emerald-300">
-            {getRoleLabel()}: Welcome
+          <p className="text-[9px] font-black uppercase tracking-widest text-emerald-300">
+            {roleLabel}
           </p>
-          <p className="font-extrabold text-sm text-white truncate max-w-[150px] mt-0.5" title={userProfile.name}>
-            {userProfile.name}
+
+          <p
+            className="mt-0.5 max-w-[150px] truncate text-sm font-extrabold text-white"
+            title={username}
+          >
+            {username}
           </p>
         </div>
       </div>
 
-      <nav className="flex-1 px-4 space-y-1">
+      <nav className="flex-1 space-y-1 overflow-y-auto px-4 pb-4">
         {menuItems.map((item) => {
           const Icon = item.icon;
-          const isActive = activeTab === item.id;
+          const isActive =
+            activeTab === item.id;
+
           return (
             <button
               key={item.id}
-              onClick={() => onTabChange(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group ${
-                isActive 
-                  ? 'bg-white/15 text-white font-semibold' 
-                  : 'text-white/70 hover:bg-white/5 hover:text-white'
+              type="button"
+              onClick={() =>
+                onTabChange(item.id)
+              }
+              className={`group flex w-full items-center gap-3 rounded-xl px-4 py-3 transition-all duration-200 ${
+                isActive
+                  ? "bg-white/15 font-semibold text-white"
+                  : "text-white/70 hover:bg-white/5 hover:text-white"
               }`}
             >
-              <Icon className={`w-5 h-5 transition-transform duration-200 ${isActive ? 'scale-110' : 'group-hover:scale-105'}`} />
-              <span className="flex-1 text-left">{item.label}</span>
-              {item.count && (
-                <span className="bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+              <Icon
+                className={`h-5 w-5 transition-transform duration-200 ${
+                  isActive
+                    ? "scale-110"
+                    : "group-hover:scale-105"
+                }`}
+              />
+
+              <span className="flex-1 text-left text-sm">
+                {item.label}
+              </span>
+
+              {Boolean(item.count) && (
+                <span className="rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
                   {item.count}
                 </span>
               )}
@@ -134,13 +379,16 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, role }: Side
         })}
       </nav>
 
-      <div className="p-4 border-t border-white/10">
+      <div className="border-t border-white/10 p-4">
         <button
+          type="button"
           onClick={onLogout}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-white/70 hover:bg-rose-500/20 hover:text-rose-100 transition-all duration-200"
+          className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-white/70 transition-all duration-200 hover:bg-rose-500/20 hover:text-rose-100"
         >
-          <LogOut className="w-5 h-5" />
-          <span>Logout</span>
+          <LogOut className="h-5 w-5" />
+          <span className="text-sm font-semibold">
+            Sign Out
+          </span>
         </button>
       </div>
     </aside>

@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useAppState } from '../context/AppStateContext';
 import { GoogleLogin } from '@react-oauth/google';
 import {
   User, 
@@ -17,6 +16,18 @@ import {
   HelpCircle
 } from 'lucide-react';
 
+interface RegistrationBarangay {
+  id: number;
+  name: string;
+}
+
+interface RegistrationPurok {
+  id: number;
+  barangay_id: number;
+  name: string;
+  barangay_name?: string;
+}
+
 export default function Registration() {
   
   // Tab state: 'login' | 'register'
@@ -32,8 +43,11 @@ export default function Registration() {
   const [regFullName, setRegFullName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPhone, setRegPhone] = useState('');
-  const [regBarangay, setRegBarangay] = useState('Poblacion');
-  const [regPurok, setRegPurok] = useState('Purok 4');
+  const [regBarangayId, setRegBarangayId] = useState('');
+  const [regPurokId, setRegPurokId] = useState('');
+  const [registrationBarangays, setRegistrationBarangays] = useState<RegistrationBarangay[]>([]);
+  const [registrationPuroks, setRegistrationPuroks] = useState<RegistrationPurok[]>([]);
+  const [locationsLoading, setLocationsLoading] = useState(false);
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
   
@@ -48,88 +62,146 @@ const [forgotOtp, setForgotOtp] = useState('');
 const [newPassword, setNewPassword] = useState('');
 const [confirmNewPassword, setConfirmNewPassword] = useState('');
 
-  const barangays = [
-    'Pilipog',
-    'Poblacion',
-    'Bangbang',
-    'Algeria',
-    'Day-as',
-    'Buagsong',
-    'Dapitan',
-    'Cogon',
-    'Ibabao',
-    'Gilutungan',
-    'Catarman',
-    'Gabi',
-    'San Miguel'
-  ];
+  const filteredRegistrationPuroks = useMemo(() => {
+    const barangayId = Number(regBarangayId);
 
-  const puroks = [
-    'Purok 1',
-    'Purok 2',
-    'Purok 3',
-    'Purok 4',
-    'Purok 5',
-    'Purok 6',
-    'Purok 7',
-    'Purok 8',
-    'Purok 9'
-  ];
+    if (!barangayId) {
+      return [];
+    }
+
+    return registrationPuroks.filter(
+      (purok) => purok.barangay_id === barangayId,
+    );
+  }, [registrationPuroks, regBarangayId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRegistrationLocations = async () => {
+      setLocationsLoading(true);
+
+      try {
+        const response = await fetch('/api/auth/registration-locations');
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(
+            data.message || 'Unable to load barangays and puroks.',
+          );
+        }
+
+        if (!cancelled) {
+          setRegistrationBarangays(
+            Array.isArray(data.barangays) ? data.barangays : [],
+          );
+          setRegistrationPuroks(
+            Array.isArray(data.puroks) ? data.puroks : [],
+          );
+        }
+      } catch (err) {
+        console.error('Registration locations error:', err);
+
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'Unable to load barangays and puroks.',
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLocationsLoading(false);
+        }
+      }
+    };
+
+    loadRegistrationLocations();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const validateEmail = (emailStr: string) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr);
   };
 
-  const completeLogin = (data: any, remember: boolean) => {
-    const backendRole = String(data?.user?.role || 'resident');
-    const appRole =
-      backendRole === 'purok_leader'
-        ? 'leader'
-        : backendRole === 'resident'
-          ? 'household'
-          : backendRole;
+ const completeLogin = (data: any, remember: boolean) => {
+  const backendRole = String(data?.user?.role || "resident");
 
-    const currentScreen =
-      appRole === 'admin'
-        ? 'admin-dashboard'
-        : appRole === 'collector'
-          ? 'collector-tasks'
-          : appRole === 'leader'
-            ? 'leader-dashboard'
-            : 'dashboard';
+  const appRole =
+    backendRole === "super_admin"
+      ? "super_admin"
+      : backendRole === "admin"
+        ? "admin"
+        : backendRole === "purok_leader"
+          ? "leader"
+          : backendRole === "collector"
+            ? "collector"
+            : "household";
 
-    const appUser = {
-      name: data?.user?.full_name || data?.user?.name || 'User',
-      email: data?.user?.email || '',
-      phone: data?.user?.phone || '',
-      communalZone: data?.user?.purok_id
-        ? `Purok ${data.user.purok_id}`
-        : '',
-      password: '',
-      role: appRole,
-      address: data?.user?.address || '',
-      householdId:
-        appRole === 'collector'
-          ? `COL-${data.user.id}`
-          : appRole === 'leader'
-            ? `LDR-${data.user.id}`
-            : appRole === 'admin'
-              ? `ADM-${data.user.id}`
-              : `HH-${data.user.id}`,
-    };
+  const currentScreen =
+    appRole === "super_admin"
+      ? "super-admin-dashboard"
+      : appRole === "admin"
+        ? "admin-dashboard"
+        : appRole === "collector"
+          ? "collector-tasks"
+          : appRole === "leader"
+            ? "leader-dashboard"
+            : "dashboard";
 
-    localStorage.setItem('token', data.token);
-    localStorage.setItem('sg_current_user', JSON.stringify(appUser));
-    localStorage.setItem('sg_is_logged_in', 'true');
-    localStorage.setItem('sg_user_role', appRole);
-    localStorage.setItem('sg_current_screen', currentScreen);
-
-    if (!remember) {
-      sessionStorage.setItem('token', data.token);
-    }
-
-    window.location.reload();
+  const appUser = {
+    id: data.user.id,
+    name: data.user.full_name,
+    email: data.user.email,
+    phone: data.user.phone || "",
+    communalZone: [data.user.purok_name, data.user.barangay_name]
+      .filter(Boolean)
+      .join(", "),
+    password: "",
+    role: appRole,
+    address: data.user.address || "",
+    householdId:
+      appRole === "super_admin"
+        ? `SUP-${data.user.id}`
+        : appRole === "admin"
+        ? `ADM-${data.user.id}`
+        : appRole === "leader"
+        ? `LDR-${data.user.id}`
+        : appRole === "collector"
+        ? `COL-${data.user.id}`
+        : `HH-${data.user.id}`,
   };
+
+  localStorage.setItem("token", data.token);
+
+  if (!remember) {
+    sessionStorage.setItem("token", data.token);
+  }
+
+  localStorage.setItem(
+    "sg_current_user",
+    JSON.stringify(appUser)
+  );
+
+  localStorage.setItem("sg_is_logged_in", "true");
+  localStorage.setItem("sg_user_role", appRole);
+  localStorage.setItem("sg_current_screen", currentScreen);
+
+  if (data.mustChangePassword === true) {
+    localStorage.setItem(
+      "sg_current_screen",
+      "change-initial-password"
+    );
+    localStorage.setItem(
+      "sg_temp_login_email",
+      data.user.email
+    );
+  }
+
+  window.location.reload();
+};
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -180,6 +252,8 @@ const [confirmNewPassword, setConfirmNewPassword] = useState('');
       !regFullName.trim() ||
       !regEmail.trim() ||
       !regPhone.trim() ||
+      !regBarangayId ||
+      !regPurokId ||
       !regPassword ||
       !regConfirmPassword
     ) {
@@ -203,7 +277,17 @@ const [confirmNewPassword, setConfirmNewPassword] = useState('');
     }
 
     try {
-      const purokId = Number(regPurok.replace(/\D/g, '')) || null;
+      const barangay = registrationBarangays.find(
+        (item) => item.id === Number(regBarangayId),
+      );
+      const purok = registrationPuroks.find(
+        (item) => item.id === Number(regPurokId),
+      );
+
+      if (!barangay || !purok || purok.barangay_id !== barangay.id) {
+        setError('Please select a valid barangay and purok.');
+        return;
+      }
 
       const response = await fetch('/api/auth/register', {
         method: 'POST',
@@ -214,10 +298,9 @@ const [confirmNewPassword, setConfirmNewPassword] = useState('');
           fullName: regFullName.trim(),
           email: regEmail.trim().toLowerCase(),
           password: regPassword,
-          role: 'resident',
-          purokId,
+          purokId: purok.id,
           phone: regPhone.trim(),
-          address: `${regPurok}, ${regBarangay}`,
+          address: `${purok.name}, ${barangay.name}`, 
         }),
       });
 
@@ -233,6 +316,8 @@ const [confirmNewPassword, setConfirmNewPassword] = useState('');
       setRegFullName('');
       setRegEmail('');
       setRegPhone('');
+      setRegBarangayId('');
+      setRegPurokId('');
       setRegPassword('');
       setRegConfirmPassword('');
 
@@ -619,13 +704,21 @@ const handleResetPasswordSubmit = async (e: React.FormEvent) => {
                   <div className="relative flex items-center">
                     <MapPin className="absolute left-4 w-4 h-4 text-stone-400" />
                     <select
-                      value={regBarangay}
-                      onChange={(e) => setRegBarangay(e.target.value)}
-                      className="w-full pl-11 pr-10 py-2.5 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800 appearance-none cursor-pointer"
+                      value={regBarangayId}
+                      onChange={(e) => {
+                        setRegBarangayId(e.target.value);
+                        setRegPurokId('');
+                      }}
+                      disabled={locationsLoading}
+                      required
+                      className="w-full pl-11 pr-10 py-2.5 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800 appearance-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {barangays.map((bgy) => (
-                        <option key={bgy} value={bgy}>
-                          {bgy}
+                      <option value="">
+                        {locationsLoading ? 'Loading...' : 'Select barangay'}
+                      </option>
+                      {registrationBarangays.map((bgy) => (
+                        <option key={bgy.id} value={bgy.id}>
+                          {bgy.name}
                         </option>
                       ))}
                     </select>
@@ -635,13 +728,18 @@ const handleResetPasswordSubmit = async (e: React.FormEvent) => {
                   <div className="relative flex items-center">
                     <MapPin className="absolute left-4 w-4 h-4 text-stone-400" />
                     <select
-                      value={regPurok}
-                      onChange={(e) => setRegPurok(e.target.value)}
-                      className="w-full pl-11 pr-10 py-2.5 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800 appearance-none cursor-pointer"
+                      value={regPurokId}
+                      onChange={(e) => setRegPurokId(e.target.value)}
+                      disabled={!regBarangayId || locationsLoading}
+                      required
+                      className="w-full pl-11 pr-10 py-2.5 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800 appearance-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {puroks.map((p) => (
-                        <option key={p} value={p}>
-                          {p}
+                      <option value="">
+                        {!regBarangayId ? 'Select barangay first' : 'Select purok'}
+                      </option>
+                      {filteredRegistrationPuroks.map((purok) => (
+                        <option key={purok.id} value={purok.id}>
+                          {purok.name}
                         </option>
                       ))}
                     </select>

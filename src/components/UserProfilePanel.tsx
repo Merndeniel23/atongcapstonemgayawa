@@ -1,480 +1,583 @@
-import React, { useState, useEffect } from 'react';
-import { useAppState } from '../context/AppStateContext';
-import { User, MapPin, Phone, ShieldCheck, Mail, Award, ShieldAlert, ChevronDown, FileText, Send, HelpCircle } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  Award,
+  HelpCircle,
+  Loader2,
+  Mail,
+  MapPin,
+  Phone,
+  Send,
+  ShieldAlert,
+  ShieldCheck,
+  User,
+} from "lucide-react";
 
-export default function UserProfilePanel() {
-  const { userProfile, currentUser, updateProfile, userRole, addComplaint } = useAppState();
-  
-  const activeUser = currentUser || userProfile;
+interface ProfileUser {
+  id: number;
+  full_name: string;
+  email: string;
+  role: "admin" | "resident" | "collector" | "purok_leader";
+  phone: string | null;
+  address: string | null;
+  status: string;
+  barangay_id: number | null;
+  barangay_name: string | null;
+  purok_id: number | null;
+  purok_name: string | null;
+  created_at?: string;
+}
 
-  const barangays = [
-    'Pilipog',
-    'Poblacion',
-    'Bangbang',
-    'Algeria',
-    'Day-as',
-    'Buagsong',
-    'Dapitan',
-    'Cogon',
-    'Ibabao',
-    'Gilutungan',
-    'Catarman',
-    'Gabi',
-    'San Miguel'
-  ];
+const API_BASE = "http://localhost:3001/api";
 
-  const puroks = [
-    'Purok 1',
-    'Purok 2',
-    'Purok 3',
-    'Purok 4',
-    'Purok 5',
-    'Purok 6',
-    'Purok 7',
-    'Purok 8',
-    'Purok 9'
-  ];
+function getToken() {
+  return localStorage.getItem("token") || "";
+}
 
-  // Local state for form input fields
-  const [name, setName] = useState((activeUser as any).name);
-  const [email, setEmail] = useState((activeUser as any).email || '');
-  const [address, setAddress] = useState((activeUser as any).address || '123 Purok Central');
-  const [householdId, setHouseholdId] = useState((activeUser as any).householdId || (activeUser as any).id || 'HH-2026-904');
-  const [contactInfo, setContactInfo] = useState((activeUser as any).phone || (activeUser as any).contactInfo || '0912345678');
-  const [selectedBarangay, setSelectedBarangay] = useState('Poblacion');
-  const [selectedPurok, setSelectedPurok] = useState('Purok 4');
-
-  // Address Correction Request states
-  const [correctionBarangay, setCorrectionBarangay] = useState('Poblacion');
-  const [correctionPurok, setCorrectionPurok] = useState('Purok 4');
-  const [correctionAddress, setCorrectionAddress] = useState('');
-  const [correctionReason, setCorrectionReason] = useState('');
-  const [correctionSuccess, setCorrectionSuccess] = useState('');
-  const [correctionError, setCorrectionError] = useState('');
-  const [showCorrectionForm, setShowCorrectionForm] = useState(false);
-
-  const [notif, setNotif] = useState('');
-  const [error, setError] = useState('');
-
-  // Dynamically initialize fields when user state is ready
-  useEffect(() => {
-    const active = currentUser || userProfile;
-    if (active) {
-      setName((active as any).name);
-      setEmail((active as any).email || 'test@household.com');
-      setAddress((active as any).address || '123 Purok Central');
-      setHouseholdId((active as any).householdId || (active as any).id || 'HH-2026-904');
-      setContactInfo((active as any).phone || (active as any).contactInfo || '0912345678');
-      setCorrectionAddress((active as any).address || '123 Purok Central');
-      
-      const rawZone = (active as any).communalZone || 'Purok 4 communal zone';
-      let p = 'Purok 4';
-      let b = 'Poblacion';
-      
-      const matchingPurok = puroks.find(pk => rawZone.toLowerCase().includes(pk.toLowerCase()));
-      const matchingBgy = barangays.find(bgy => rawZone.toLowerCase().includes(bgy.toLowerCase()));
-      
-      if (matchingPurok) p = matchingPurok;
-      if (matchingBgy) b = matchingBgy;
-      
-      setSelectedPurok(p);
-      setSelectedBarangay(b);
-      setCorrectionPurok(p);
-      setCorrectionBarangay(b);
-    }
-  }, [currentUser, userProfile]);
-
- const handleSave = async (e: React.FormEvent) => {
-  e.preventDefault();
-
-  setError('');
-  setNotif('');
-
-  if (!name.trim() || !email.trim() || !contactInfo.trim()) {
-    setError('Please fill in all required fields.');
-    return;
-  }
-
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-  if (!emailRegex.test(email.trim())) {
-    setError('Please provide a valid email address.');
-    return;
-  }
-
-  const token =
-    localStorage.getItem('sg_auth_token') ||
-    localStorage.getItem('auth_token') ||
-    localStorage.getItem('token');
+async function apiRequest(
+  endpoint: string,
+  options: RequestInit = {},
+) {
+  const token = getToken();
 
   if (!token) {
-    setError('Walay login token. Please logout ug login balik.');
-    return;
+    throw new Error("Login session is missing. Please log in again.");
   }
 
-  try {
-    const response = await fetch('/api/auth/update-profile', {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        fullName: name.trim(),
-        phone: contactInfo.trim(),
-        address: address.trim(),
-      }),
-    });
+  const response = await fetch(`${API_BASE}${endpoint}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...(options.headers || {}),
+    },
+  });
 
-    const data = await response.json();
+  const data = await response.json().catch(() => ({}));
 
-    if (!response.ok) {
-      throw new Error(data.message || 'Unable to update profile.');
-    }
-
-    updateProfile({
-      name: name.trim(),
-      address: address.trim(),
-      householdId: householdId.trim(),
-      contactInfo: contactInfo.trim(),
-      communalZone: `${selectedPurok}, ${selectedBarangay}`,
-    });
-
-    setNotif('Profile updated successfully and saved to MySQL.');
-
-    setTimeout(() => setNotif(''), 4000);
-  } catch (err) {
-    setError(
-      err instanceof Error
-        ? err.message
-        : 'Unable to update profile.',
-    );
+  if (!response.ok) {
+    throw new Error(data.message || "Request failed.");
   }
-};
-  const handleCorrectionSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setCorrectionError('');
-    setCorrectionSuccess('');
 
-    if (!correctionAddress.trim()) {
-      setCorrectionError('Please provide the physical delivery address you want to change to.');
-      return;
+  return data;
+}
+
+function roleLabel(role?: ProfileUser["role"]) {
+  switch (role) {
+    case "admin":
+      return "Barangay Captain";
+    case "purok_leader":
+      return "Purok Leader";
+    case "collector":
+      return "Garbage Collector";
+    default:
+      return "Civilian";
+  }
+}
+
+function userCode(user: ProfileUser | null) {
+  if (!user) return "";
+
+  const prefix =
+    user.role === "admin"
+      ? "BC"
+      : user.role === "purok_leader"
+        ? "PL"
+        : user.role === "collector"
+          ? "GC"
+          : "CV";
+
+  return `${prefix}-${String(user.id).padStart(4, "0")}`;
+}
+
+export default function UserProfilePanel() {
+  const [profile, setProfile] = useState<ProfileUser | null>(null);
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [notif, setNotif] = useState("");
+  const [error, setError] = useState("");
+
+  const [showCorrectionForm, setShowCorrectionForm] = useState(false);
+  const [correctionAddress, setCorrectionAddress] = useState("");
+  const [correctionReason, setCorrectionReason] = useState("");
+  const [correctionSuccess, setCorrectionSuccess] = useState("");
+  const [correctionError, setCorrectionError] = useState("");
+  const [correctionSubmitting, setCorrectionSubmitting] = useState(false);
+
+  const isCivilian = profile?.role === "resident";
+
+  const assignmentText = useMemo(() => {
+    if (!profile) return "No assignment";
+
+    if (profile.role === "collector") {
+      return profile.barangay_name
+        ? `${profile.barangay_name} · Barangay-wide collection`
+        : "No barangay assigned";
     }
-    if (!correctionReason.trim()) {
-      setCorrectionError('Please explain why this correction is needed so the Purok Leader can review it.');
-      return;
+
+    return [
+      profile.purok_name,
+      profile.barangay_name,
+    ]
+      .filter(Boolean)
+      .join(", ") || "No purok assigned";
+  }, [profile]);
+
+  const loadProfile = async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const data = await apiRequest("/auth/me");
+      const user = data.user as ProfileUser;
+
+      setProfile(user);
+      setName(user.full_name || "");
+      setPhone(user.phone || "");
+      setAddress(user.address || "");
+      setCorrectionAddress(user.address || "");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load profile.",
+      );
+    } finally {
+      setLoading(false);
     }
-
-    addComplaint({
-      type: 'Address & Zone Correction',
-      purok: selectedPurok,
-      description: `[Address Correction Request]
-Requested Barangay: ${correctionBarangay}
-Requested Purok: ${correctionPurok}
-Requested Physical Address: ${correctionAddress.trim()}
-Reason: ${correctionReason.trim()}`,
-      creator: name,
-      phone: contactInfo,
-      date: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
-      status: 'Pending Review'
-    });
-
-    setCorrectionSuccess('Correction request successfully filed! Your Purok Leader & Admin have been notified. They can approve and automatically apply this change.');
-    setCorrectionReason('');
-    
-    // Clear success message after 6 seconds
-    setTimeout(() => setCorrectionSuccess(''), 6000);
   };
 
+  useEffect(() => {
+    loadProfile();
+  }, []);
+
+  const handleSave = async (event: React.FormEvent) => {
+    event.preventDefault();
+
+    setError("");
+    setNotif("");
+
+    if (!name.trim()) {
+      setError("Full name is required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const data = await apiRequest("/auth/update-profile", {
+        method: "PUT",
+        body: JSON.stringify({
+          fullName: name.trim(),
+          phone: phone.trim(),
+          address: address.trim(),
+        }),
+      });
+
+      const updatedUser = data.user as ProfileUser;
+
+      setProfile(updatedUser);
+      setName(updatedUser.full_name || "");
+      setPhone(updatedUser.phone || "");
+      setAddress(updatedUser.address || "");
+
+      localStorage.setItem(
+        "sg_current_user",
+        JSON.stringify({
+          name: updatedUser.full_name,
+          email: updatedUser.email,
+          phone: updatedUser.phone || "",
+          address: updatedUser.address || "",
+          communalZone: [
+            updatedUser.purok_name,
+            updatedUser.barangay_name,
+          ]
+            .filter(Boolean)
+            .join(", "),
+          role:
+            updatedUser.role === "purok_leader"
+              ? "leader"
+              : updatedUser.role === "resident"
+                ? "household"
+                : updatedUser.role,
+          householdId: userCode(updatedUser),
+        }),
+      );
+
+      setNotif(data.message || "Profile updated successfully.");
+      window.setTimeout(() => setNotif(""), 4000);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to update profile.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCorrectionSubmit = async (
+    event: React.FormEvent,
+  ) => {
+    event.preventDefault();
+
+    setCorrectionError("");
+    setCorrectionSuccess("");
+
+    if (!correctionAddress.trim()) {
+      setCorrectionError(
+        "Please provide your requested corrected address.",
+      );
+      return;
+    }
+
+    if (!correctionReason.trim()) {
+      setCorrectionError(
+        "Please explain why the correction is needed.",
+      );
+      return;
+    }
+
+    if (!profile?.purok_id) {
+      setCorrectionError(
+        "Your account has no assigned purok. Please contact the Barangay Captain.",
+      );
+      return;
+    }
+
+    setCorrectionSubmitting(true);
+
+    try {
+      const data = await apiRequest("/complaints", {
+        method: "POST",
+        body: JSON.stringify({
+          complaint_type: "Address & Zone Correction",
+          description: [
+            "[Address Correction Request]",
+            `Current Barangay: ${profile.barangay_name || "Not assigned"}`,
+            `Current Purok: ${profile.purok_name || "Not assigned"}`,
+            `Requested Address: ${correctionAddress.trim()}`,
+            `Reason: ${correctionReason.trim()}`,
+          ].join("\n"),
+          phone: phone.trim() || null,
+          purok_id: profile.purok_id,
+        }),
+      });
+
+      setCorrectionSuccess(
+        data.message ||
+          "Correction request filed successfully.",
+      );
+
+      setCorrectionReason("");
+      window.setTimeout(
+        () => setCorrectionSuccess(""),
+        6000,
+      );
+    } catch (err) {
+      setCorrectionError(
+        err instanceof Error
+          ? err.message
+          : "Unable to submit correction request.",
+      );
+    } finally {
+      setCorrectionSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[420px] items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="mx-auto h-7 w-7 animate-spin text-emerald-600" />
+          <p className="mt-3 text-sm font-bold text-slate-500">
+            Loading profile from database...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6 max-w-2xl mx-auto pb-20 md:pb-0">
+    <div className="mx-auto max-w-2xl space-y-6 pb-20 md:pb-0">
       <div>
-        <span className="text-emerald-600 font-extrabold text-[10px] uppercase tracking-[0.2em] block mb-1">Household Settings</span>
-        <h1 className="text-3xl font-black text-slate-900 tracking-tight leading-none">My Profile</h1>
-        <p className="text-slate-500 text-xs mt-1">Manage environmental credentials, contact numbers, and bin zones.</p>
+        <span className="mb-1 block text-[10px] font-extrabold uppercase tracking-[0.2em] text-emerald-600">
+          LGU Account Settings
+        </span>
+        <h1 className="text-3xl font-black leading-none tracking-tight text-slate-900">
+          My Profile
+        </h1>
+        <p className="mt-1 text-xs text-slate-500">
+          View your official barangay assignment and update allowed profile details.
+        </p>
       </div>
 
       {notif && (
-        <div className="bg-emerald-50 border border-emerald-150 text-emerald-800 px-6 py-4 rounded-[1.8rem] flex items-center gap-3 shadow-md animate-bounce">
-          <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
+        <div className="flex items-center gap-3 rounded-[1.8rem] border border-emerald-200 bg-emerald-50 px-6 py-4 text-emerald-800 shadow-md">
+          <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-600" />
           <span className="text-xs font-black">{notif}</span>
         </div>
       )}
 
       {error && (
-        <div className="bg-rose-50 border border-rose-150 text-rose-800 px-6 py-4 rounded-[1.8rem] flex items-center gap-3 shadow-md">
-          <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0" />
+        <div className="flex items-center gap-3 rounded-[1.8rem] border border-rose-200 bg-rose-50 px-6 py-4 text-rose-800 shadow-md">
+          <ShieldAlert className="h-5 w-5 shrink-0 text-rose-600" />
           <span className="text-xs font-black">{error}</span>
         </div>
       )}
 
-      <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden p-6 md:p-8 space-y-8">
-        
-        {/* Profile Avatar Card */}
-        <div className="flex flex-col md:flex-row items-center gap-6 pb-6 border-b border-slate-100">
-          <div className="w-20 h-20 rounded-full bg-emerald-50 text-emerald-700 flex items-center justify-center font-black text-2xl border-2 border-emerald-500/20 shadow-inner">
-            {name.charAt(0).toUpperCase()}
+      <div className="space-y-8 overflow-hidden rounded-[2.5rem] border border-slate-100 bg-white p-6 shadow-sm md:p-8">
+        <div className="flex flex-col items-center gap-6 border-b border-slate-100 pb-6 md:flex-row">
+          <div className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-emerald-500/20 bg-emerald-50 text-2xl font-black text-emerald-700 shadow-inner">
+            {(name || "U").charAt(0).toUpperCase()}
           </div>
-          <div className="text-center md:text-left space-y-1">
-            <h3 className="text-lg font-black text-slate-800 leading-none">{name}</h3>
-            <p className="text-xs font-extrabold text-emerald-600 uppercase tracking-widest">{selectedPurok}, {selectedBarangay}</p>
-            <p className="text-[10px] text-slate-400 font-bold uppercase">ID: {householdId}</p>
+
+          <div className="space-y-1 text-center md:text-left">
+            <h3 className="text-lg font-black leading-none text-slate-800">
+              {name || "User"}
+            </h3>
+            <p className="text-xs font-extrabold uppercase tracking-widest text-emerald-600">
+              {roleLabel(profile?.role)}
+            </p>
+            <p className="text-[10px] font-bold uppercase text-slate-400">
+              {assignmentText}
+            </p>
+            <p className="text-[10px] font-bold uppercase text-slate-400">
+              ID: {userCode(profile)}
+            </p>
           </div>
         </div>
 
-        {/* Editable Form */}
         <form onSubmit={handleSave} className="space-y-6 text-xs font-semibold">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
             <div className="space-y-1.5">
-              <label className="text-slate-450 font-black uppercase tracking-widest block ml-1">Household Owner Name</label>
+              <label className="ml-1 block font-black uppercase tracking-widest text-slate-500">
+                Full Name
+              </label>
               <div className="relative flex items-center">
-                <User className="absolute left-4 w-4 h-4 text-slate-400" />
-                <input 
-                  type="text" 
-                  value={name} 
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 font-extrabold focus:ring-2 focus:ring-emerald-500/10 focus:outline-none focus:border-emerald-500 transition-all"
+                <User className="absolute left-4 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3.5 pl-11 pr-4 font-extrabold text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
                   required
                 />
               </div>
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-slate-450 font-black uppercase tracking-widest block ml-1">Email Address</label>
+              <label className="ml-1 block font-black uppercase tracking-widest text-slate-500">
+                Email Address
+              </label>
               <div className="relative flex items-center">
-                <Mail className="absolute left-4 w-4 h-4 text-slate-400" />
-                <input 
-                  type="email" 
-                  value={email} 
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 font-extrabold focus:ring-2 focus:ring-emerald-500/10 focus:outline-none focus:border-emerald-500 transition-all"
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-slate-450 font-black uppercase tracking-widest block ml-1">Contact Mobile Number</label>
-              <div className="relative flex items-center">
-                <Phone className="absolute left-4 w-4 h-4 text-slate-400" />
-                <input 
-                  type="text" 
-                  value={contactInfo} 
-                  onChange={(e) => setContactInfo(e.target.value)}
-                  className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 font-extrabold focus:ring-2 focus:ring-emerald-500/10 focus:outline-none focus:border-emerald-500 transition-all"
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex justify-between items-center ml-1">
-                <label className="text-slate-450 font-black uppercase tracking-widest block">Communal Zone Assignment</label>
-                {userRole === 'household' && (
-                  <span className="text-[9px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md font-black uppercase tracking-wider">Locked</span>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="relative flex items-center">
-                  <MapPin className="absolute left-4 w-4 h-4 text-slate-400" />
-                  <select 
-                    value={selectedBarangay} 
-                    onChange={(e) => setSelectedBarangay(e.target.value)}
-                    disabled={userRole === 'household'}
-                    className={`w-full pl-11 pr-10 py-3.5 border rounded-2xl text-xs font-extrabold focus:ring-2 focus:ring-emerald-500/10 focus:outline-none focus:border-emerald-500 transition-all appearance-none ${
-                      userRole === 'household'
-                        ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
-                        : 'bg-slate-50 border-slate-200 text-slate-800 cursor-pointer'
-                    }`}
-                  >
-                    {barangays.map(b => (
-                      <option key={b} value={b}>{b}</option>
-                    ))}
-                  </select>
-                  {userRole !== 'household' && <ChevronDown className="absolute right-4 w-4 h-4 text-slate-400 pointer-events-none" />}
-                </div>
-                <div className="relative flex items-center">
-                  <MapPin className="absolute left-4 w-4 h-4 text-slate-400" />
-                  <select 
-                    value={selectedPurok} 
-                    onChange={(e) => setSelectedPurok(e.target.value)}
-                    disabled={userRole === 'household'}
-                    className={`w-full pl-11 pr-10 py-3.5 border rounded-2xl text-xs font-extrabold focus:ring-2 focus:ring-emerald-500/10 focus:outline-none focus:border-emerald-500 transition-all appearance-none ${
-                      userRole === 'household'
-                        ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
-                        : 'bg-slate-50 border-slate-200 text-slate-800 cursor-pointer'
-                    }`}
-                  >
-                    {puroks.map(p => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
-                  </select>
-                  {userRole !== 'household' && <ChevronDown className="absolute right-4 w-4 h-4 text-slate-400 pointer-events-none" />}
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-slate-450 font-black uppercase tracking-widest block ml-1">Household ID Code (Read Only)</label>
-              <div className="relative flex items-center">
-                <Award className="absolute left-4 w-4 h-4 text-slate-400" />
-                <input 
-                  type="text" 
-                  value={householdId} 
+                <Mail className="absolute left-4 h-4 w-4 text-slate-400" />
+                <input
+                  type="email"
+                  value={profile?.email || ""}
                   disabled
-                  className="w-full pl-11 pr-4 py-3.5 bg-slate-100 border border-slate-200 rounded-2xl text-slate-500 font-bold cursor-not-allowed"
+                  className="w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 py-3.5 pl-11 pr-4 font-bold text-slate-500"
                 />
               </div>
             </div>
 
             <div className="space-y-1.5">
-              <div className="flex justify-between items-center ml-1">
-                <label className="text-slate-450 font-black uppercase tracking-widest block">Physical Delivery Address</label>
-                {userRole === 'household' && (
-                  <span className="text-[9px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md font-black uppercase tracking-wider">Locked</span>
-                )}
-              </div>
+              <label className="ml-1 block font-black uppercase tracking-widest text-slate-500">
+                Contact Mobile Number
+              </label>
               <div className="relative flex items-center">
-                <MapPin className="absolute left-4 w-4 h-4 text-slate-400" />
-                <input 
-                  type="text" 
-                  value={address} 
-                  onChange={(e) => setAddress(e.target.value)}
-                  disabled={userRole === 'household'}
-                  className={`w-full pl-11 pr-4 py-3.5 border rounded-2xl font-extrabold focus:ring-2 focus:ring-emerald-500/10 focus:outline-none focus:border-emerald-500 transition-all ${
-                    userRole === 'household'
-                      ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
-                      : 'bg-slate-50 border-slate-200 text-slate-800'
-                  }`}
-                  required
+                <Phone className="absolute left-4 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={phone}
+                  onChange={(event) => setPhone(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3.5 pl-11 pr-4 font-extrabold text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
                 />
               </div>
             </div>
 
+            <div className="space-y-1.5">
+              <label className="ml-1 block font-black uppercase tracking-widest text-slate-500">
+                Official Barangay Assignment
+              </label>
+              <div className="relative flex items-center">
+                <MapPin className="absolute left-4 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={profile?.barangay_name || "Not assigned"}
+                  disabled
+                  className="w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 py-3.5 pl-11 pr-4 font-bold text-slate-500"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="ml-1 block font-black uppercase tracking-widest text-slate-500">
+                Official Purok Assignment
+              </label>
+              <div className="relative flex items-center">
+                <MapPin className="absolute left-4 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={
+                    profile?.role === "collector"
+                      ? "Barangay-wide"
+                      : profile?.purok_name || "Not assigned"
+                  }
+                  disabled
+                  className="w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 py-3.5 pl-11 pr-4 font-bold text-slate-500"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="ml-1 block font-black uppercase tracking-widest text-slate-500">
+                LGU Account Code
+              </label>
+              <div className="relative flex items-center">
+                <Award className="absolute left-4 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={userCode(profile)}
+                  disabled
+                  className="w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 py-3.5 pl-11 pr-4 font-bold text-slate-500"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5 md:col-span-2">
+              <div className="ml-1 flex items-center justify-between">
+                <label className="block font-black uppercase tracking-widest text-slate-500">
+                  Physical Address
+                </label>
+                {isCivilian && (
+                  <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-amber-600">
+                    Locked
+                  </span>
+                )}
+              </div>
+
+              <div className="relative flex items-center">
+                <MapPin className="absolute left-4 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={address}
+                  onChange={(event) => setAddress(event.target.value)}
+                  disabled={isCivilian}
+                  className={`w-full rounded-2xl border py-3.5 pl-11 pr-4 font-extrabold ${
+                    isCivilian
+                      ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-500"
+                      : "border-slate-200 bg-slate-50 text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
+                  }`}
+                />
+              </div>
+            </div>
           </div>
 
-          <button 
+          <button
             type="submit"
-            className="w-full py-4 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold uppercase tracking-widest rounded-2xl shadow-lg shadow-emerald-800/10 cursor-pointer border-none"
+            disabled={saving}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl border-none bg-emerald-700 py-4 font-extrabold uppercase tracking-widest text-white shadow-lg shadow-emerald-800/10 hover:bg-emerald-800 disabled:opacity-50"
           >
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
             Save Profile Credentials
           </button>
         </form>
 
-        {userRole === 'household' && (
-          <div className="pt-6 border-t border-slate-100">
+        {isCivilian && (
+          <div className="border-t border-slate-100 pt-6">
             <button
               type="button"
-              onClick={() => setShowCorrectionForm(!showCorrectionForm)}
-              className="w-full flex items-center justify-between p-4 bg-amber-500/5 hover:bg-amber-500/10 border border-amber-500/15 rounded-2xl text-left cursor-pointer transition-colors"
+              onClick={() => setShowCorrectionForm((value) => !value)}
+              className="flex w-full items-center justify-between rounded-2xl border border-amber-500/15 bg-amber-500/5 p-4 text-left transition-colors hover:bg-amber-500/10"
             >
               <div className="flex items-center gap-3">
-                <HelpCircle className="w-5 h-5 text-amber-600 shrink-0" />
+                <HelpCircle className="h-5 w-5 shrink-0 text-amber-600" />
                 <div>
-                  <h4 className="text-xs font-black text-slate-800 leading-tight">Mistake in your Address or Zone?</h4>
-                  <p className="text-[10px] text-slate-500 font-bold mt-0.5">Submit an official correction report to your Purok Leader or Admin.</p>
+                  <h4 className="text-xs font-black leading-tight text-slate-800">
+                    Mistake in your Address or Zone?
+                  </h4>
+                  <p className="mt-0.5 text-[10px] font-bold text-slate-500">
+                    File an official correction request for Barangay Captain review.
+                  </p>
                 </div>
               </div>
-              <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${showCorrectionForm ? 'rotate-180' : ''}`} />
             </button>
 
             {showCorrectionForm && (
-              <form onSubmit={handleCorrectionSubmit} className="mt-4 p-5 bg-slate-50 border border-slate-150 rounded-2xl space-y-4">
-                <div className="flex items-center gap-2 text-slate-700 font-black text-[10px] uppercase tracking-wider pb-2 border-b border-slate-200">
-                  <FileText className="w-4 h-4 text-amber-500" />
-                  Official Correction Ticket
-                </div>
-
+              <form
+                onSubmit={handleCorrectionSubmit}
+                className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-5"
+              >
                 {correctionSuccess && (
-                  <div className="bg-emerald-50 border border-emerald-150 text-emerald-850 p-4 rounded-xl flex items-center gap-2.5">
-                    <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span className="text-[10px] font-bold">{correctionSuccess}</span>
+                  <div className="flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-800">
+                    <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600" />
+                    <span className="text-[10px] font-bold">
+                      {correctionSuccess}
+                    </span>
                   </div>
                 )}
 
                 {correctionError && (
-                  <div className="bg-rose-50 border border-rose-150 text-rose-850 p-4 rounded-xl flex items-center gap-2.5">
-                    <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0" />
-                    <span className="text-[10px] font-bold">{correctionError}</span>
+                  <div className="flex items-center gap-2.5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-rose-800">
+                    <ShieldAlert className="h-4 w-4 shrink-0 text-rose-600" />
+                    <span className="text-[10px] font-bold">
+                      {correctionError}
+                    </span>
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-slate-500 font-bold text-[10px] uppercase tracking-wider block ml-1">Requested Barangay</label>
-                    <div className="relative flex items-center">
-                      <MapPin className="absolute left-3 w-3.5 h-3.5 text-slate-400" />
-                      <select 
-                        value={correctionBarangay} 
-                        onChange={(e) => setCorrectionBarangay(e.target.value)}
-                        className="w-full pl-9 pr-8 py-2.5 bg-white border border-slate-200 rounded-xl text-slate-800 text-xs font-extrabold focus:outline-none focus:border-amber-500 appearance-none cursor-pointer"
-                      >
-                        {barangays.map(b => (
-                          <option key={b} value={b}>{b}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="absolute right-3 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-slate-500 font-bold text-[10px] uppercase tracking-wider block ml-1">Requested Purok</label>
-                    <div className="relative flex items-center">
-                      <MapPin className="absolute left-3 w-3.5 h-3.5 text-slate-400" />
-                      <select 
-                        value={correctionPurok} 
-                        onChange={(e) => setCorrectionPurok(e.target.value)}
-                        className="w-full pl-9 pr-8 py-2.5 bg-white border border-slate-200 rounded-xl text-slate-800 text-xs font-extrabold focus:outline-none focus:border-amber-500 appearance-none cursor-pointer"
-                      >
-                        {puroks.map(p => (
-                          <option key={p} value={p}>{p}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="absolute right-3 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
-                    </div>
-                  </div>
-                </div>
-
                 <div className="space-y-1.5">
-                  <label className="text-slate-500 font-bold text-[10px] uppercase tracking-wider block ml-1">Requested Physical Delivery Address</label>
-                  <div className="relative flex items-center">
-                    <MapPin className="absolute left-3 w-3.5 h-3.5 text-slate-400" />
-                    <input 
-                      type="text" 
-                      placeholder="e.g. 123 Purok Central, Brgy. Poblacion"
-                      value={correctionAddress} 
-                      onChange={(e) => setCorrectionAddress(e.target.value)}
-                      className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-slate-800 text-xs font-semibold focus:outline-none focus:border-amber-500"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-slate-500 font-bold text-[10px] uppercase tracking-wider block ml-1">Reason for Address Correction</label>
-                  <textarea 
-                    placeholder="Describe the reason for change (e.g., typos in name, mistaken zone assignment on registration, relocation inside Barangay, etc.)"
-                    value={correctionReason} 
-                    onChange={(e) => setCorrectionReason(e.target.value)}
-                    rows={3}
-                    className="w-full p-3 bg-white border border-slate-200 rounded-xl text-slate-800 text-xs font-semibold focus:outline-none focus:border-amber-500 resize-none leading-relaxed"
+                  <label className="ml-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Requested Correct Address
+                  </label>
+                  <input
+                    type="text"
+                    value={correctionAddress}
+                    onChange={(event) =>
+                      setCorrectionAddress(event.target.value)
+                    }
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs font-semibold text-slate-800 focus:border-amber-500 focus:outline-none"
                     required
                   />
                 </div>
 
-                <button 
+                <div className="space-y-1.5">
+                  <label className="ml-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Reason for Correction
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={correctionReason}
+                    onChange={(event) =>
+                      setCorrectionReason(event.target.value)
+                    }
+                    placeholder="Explain the typo, wrong assignment, or relocation."
+                    className="w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-xs font-semibold leading-relaxed text-slate-800 focus:border-amber-500 focus:outline-none"
+                    required
+                  />
+                </div>
+
+                <button
                   type="submit"
-                  className="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white font-black uppercase tracking-wider text-[10px] rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer border-none"
+                  disabled={correctionSubmitting}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border-none bg-amber-600 py-3 text-[10px] font-black uppercase tracking-wider text-white shadow-md hover:bg-amber-700 disabled:opacity-50"
                 >
-                  <Send className="w-3.5 h-3.5" />
-                  File Correction Report
+                  {correctionSubmitting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Send className="h-3.5 w-3.5" />
+                  )}
+                  File Correction Request
                 </button>
               </form>
             )}
           </div>
         )}
-
       </div>
     </div>
   );

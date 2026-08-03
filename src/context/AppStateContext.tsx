@@ -1,5 +1,12 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 
+export type AppRole =
+  | 'household'
+  | 'collector'
+  | 'leader'
+  | 'admin'
+  | 'super_admin';
+
 export interface UserProfile {
   name: string;
   email?: string;
@@ -82,7 +89,7 @@ export interface UserAccount {
   phone: string;
   communalZone: string;
   password: string;
-  role: 'household' | 'collector' | 'leader' | 'admin';
+  role: AppRole;
   address: string;
   householdId: string;
 }
@@ -91,7 +98,7 @@ interface AppState {
   userProfile: UserProfile;
   currentUser: UserAccount | null;
   isLoggedIn: boolean;
-  userRole: 'household' | 'collector' | 'leader' | 'admin';
+  userRole: AppRole;
   registeredUsers: UserAccount[];
   currentScreen: string;
   setCurrentScreen: (screen: any) => void;
@@ -248,6 +255,16 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         role: 'admin',
         address: 'Municipal Center',
         householdId: 'ADM-2026-001'
+      },
+      {
+        name: 'Municipal System Administrator',
+        email: 'superadmin@cordova.gov.ph',
+        phone: '',
+        communalZone: 'Municipality of Cordova',
+        password: '',
+        role: 'super_admin',
+        address: 'Municipality of Cordova',
+        householdId: 'SUP-2026-001'
       }
     ];
     localStorage.setItem('sg_registered_users', JSON.stringify(defaults));
@@ -264,15 +281,41 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     return localStorage.getItem('sg_is_logged_in') === 'true';
   });
 
-  const [userRole, setUserRole] = useState<'household' | 'collector' | 'leader' | 'admin'>(() => {
+  const [userRole, setUserRole] = useState<AppRole>(() => {
     const savedRole = localStorage.getItem('sg_user_role');
-    return (savedRole as any) || 'household';
+
+    const validRoles: AppRole[] = [
+      'household',
+      'collector',
+      'leader',
+      'admin',
+      'super_admin',
+    ];
+
+    return validRoles.includes(savedRole as AppRole)
+      ? (savedRole as AppRole)
+      : 'household';
   });
 
   const [currentScreen, setCurrentScreen] = useState<string>(() => {
     const savedScreen = localStorage.getItem('sg_current_screen');
-    if (savedScreen) return savedScreen;
-    return localStorage.getItem('sg_is_logged_in') === 'true' ? 'dashboard' : 'registration';
+
+    if (savedScreen) {
+      return savedScreen;
+    }
+
+    if (localStorage.getItem('sg_is_logged_in') !== 'true') {
+      return 'registration';
+    }
+
+    const savedRole = localStorage.getItem('sg_user_role');
+
+    if (savedRole === 'super_admin') return 'super-admin-dashboard';
+    if (savedRole === 'admin') return 'admin-dashboard';
+    if (savedRole === 'collector') return 'collector-tasks';
+    if (savedRole === 'leader') return 'leader-dashboard';
+
+    return 'dashboard';
   });
 
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
@@ -363,6 +406,42 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('sg_current_screen', currentScreen);
   }, [currentScreen]);
 
+  useEffect(() => {
+    if (!isLoggedIn) {
+      return;
+    }
+
+    const expectedScreen =
+      userRole === 'super_admin'
+        ? 'super-admin-dashboard'
+        : userRole === 'admin'
+          ? 'admin-dashboard'
+          : userRole === 'collector'
+            ? 'collector-tasks'
+            : userRole === 'leader'
+              ? 'leader-dashboard'
+              : 'dashboard';
+
+    const roleDashboardScreens = [
+      'dashboard',
+      'collector-tasks',
+      'leader-dashboard',
+      'admin-dashboard',
+      'super-admin-dashboard',
+      'registration',
+    ];
+
+    if (
+      currentScreen === 'registration' ||
+      (
+        roleDashboardScreens.includes(currentScreen) &&
+        currentScreen !== expectedScreen
+      )
+    ) {
+      setCurrentScreen(expectedScreen);
+    }
+  }, [isLoggedIn, userRole, currentScreen]);
+
   // Save changes to localStorage
   useEffect(() => {
     localStorage.setItem('sg_user_profile', JSON.stringify(userProfile));
@@ -412,13 +491,15 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
       // Save credentials if Remember Me is checked (handled naturally by our localStorage setup)
       
-      // Navigate to correct starting screen based on role
-      if (user.role === 'collector') {
+      // Navigate to the correct starting screen based on role.
+      if (user.role === 'super_admin') {
+        setCurrentScreen('super-admin-dashboard');
+      } else if (user.role === 'admin') {
+        setCurrentScreen('admin-dashboard');
+      } else if (user.role === 'collector') {
         setCurrentScreen('collector-tasks');
       } else if (user.role === 'leader') {
         setCurrentScreen('leader-dashboard');
-      } else if (user.role === 'admin') {
-        setCurrentScreen('admin-dashboard');
       } else {
         setCurrentScreen('dashboard');
       }
@@ -466,6 +547,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('sg_is_logged_in', 'false');
     localStorage.removeItem('sg_user_role');
     localStorage.setItem('sg_current_screen', 'registration');
+    localStorage.removeItem('token');
+    localStorage.removeItem('authToken');
+    sessionStorage.removeItem('token');
+    sessionStorage.removeItem('authToken');
   };
 
   const updateProfile = (profile: Partial<UserProfile>) => {

@@ -137,6 +137,7 @@ router.post(
             u.phone,
             u.address,
             u.status,
+            u.must_change_password,
             b.name AS barangay_name,
             p.name AS purok_name
           FROM users u
@@ -189,6 +190,8 @@ router.post(
           "Login successful.",
         token,
         user,
+        mustChangePassword:
+          Number(user.must_change_password) === 1,
       });
     } catch (error) {
       console.error(
@@ -456,6 +459,7 @@ router.post(
             u.status,
             u.phone,
             u.address,
+            u.must_change_password,
             u.created_at,
             b.name AS barangay_name,
             p.name AS purok_name
@@ -546,6 +550,7 @@ router.post(
                 status,
                 phone,
                 address,
+                must_change_password,
                 created_at
               FROM users
               WHERE id = ?
@@ -580,6 +585,7 @@ router.post(
                 status,
                 phone,
                 address,
+                must_change_password,
                 created_at
               FROM users
               WHERE email = ?
@@ -612,6 +618,8 @@ router.post(
         needsLocationSetup:
           !user.barangay_id ||
           !user.purok_id,
+        mustChangePassword:
+          Number(user.must_change_password) === 1,
       });
     } catch (error: any) {
       console.error(
@@ -667,6 +675,7 @@ router.get(
             u.phone,
             u.address,
             u.status,
+            u.must_change_password,
             u.created_at
           FROM users u
           LEFT JOIN barangays b
@@ -824,6 +833,158 @@ router.put(
       return res.status(500).json({
         message:
           "Unable to update profile.",
+      });
+    }
+  },
+);
+
+router.post(
+  "/change-initial-password",
+  requireAuth,
+  async (
+    req: AuthRequest,
+    res,
+  ) => {
+    try {
+      const currentPassword = String(
+        req.body.currentPassword ||
+          req.body.temporaryPassword ||
+          "",
+      );
+
+      const newPassword = String(
+        req.body.newPassword || "",
+      );
+
+      const confirmPassword = String(
+        req.body.confirmPassword ||
+          req.body.passwordConfirmation ||
+          "",
+      );
+
+      if (!currentPassword) {
+        return res.status(400).json({
+          message:
+            "The temporary password is required.",
+        });
+      }
+
+      if (newPassword.length < 8) {
+        return res.status(400).json({
+          message:
+            "The new password must contain at least 8 characters.",
+        });
+      }
+
+      if (
+        confirmPassword &&
+        newPassword !== confirmPassword
+      ) {
+        return res.status(400).json({
+          message:
+            "The new passwords do not match.",
+        });
+      }
+
+      if (
+        currentPassword === newPassword
+      ) {
+        return res.status(400).json({
+          message:
+            "Choose a password different from the temporary password.",
+        });
+      }
+
+      const [rows] =
+        await db.query<any[]>(
+          `
+          SELECT
+            id,
+            password_hash,
+            must_change_password,
+            status
+          FROM users
+          WHERE id = ?
+          LIMIT 1
+          `,
+          [req.user!.id],
+        );
+
+      const user = rows[0];
+
+      if (!user) {
+        return res.status(404).json({
+          message:
+            "User account was not found.",
+        });
+      }
+
+      if (user.status !== "active") {
+        return res.status(403).json({
+          message:
+            "This account is inactive.",
+        });
+      }
+
+      if (
+        Number(
+          user.must_change_password,
+        ) !== 1
+      ) {
+        return res.status(409).json({
+          message:
+            "This account no longer requires an initial password change.",
+        });
+      }
+
+      const passwordMatches =
+        await bcrypt.compare(
+          currentPassword,
+          user.password_hash,
+        );
+
+      if (!passwordMatches) {
+        return res.status(401).json({
+          message:
+            "The temporary password is incorrect.",
+        });
+      }
+
+      const passwordHash =
+        await bcrypt.hash(
+          newPassword,
+          12,
+        );
+
+      await db.execute(
+        `
+        UPDATE users
+        SET
+          password_hash = ?,
+          must_change_password = 0
+        WHERE id = ?
+        `,
+        [
+          passwordHash,
+          req.user!.id,
+        ],
+      );
+
+      return res.json({
+        success: true,
+        message:
+          "Password changed successfully. You can now continue to your dashboard.",
+        mustChangePassword: false,
+      });
+    } catch (error) {
+      console.error(
+        "Initial password change error:",
+        error,
+      );
+
+      return res.status(500).json({
+        message:
+          "Unable to change the temporary password.",
       });
     }
   },
@@ -1178,7 +1339,9 @@ router.post(
       await db.execute(
         `
         UPDATE users
-        SET password_hash = ?
+        SET
+          password_hash = ?,
+          must_change_password = 0
         WHERE email = ?
         `,
         [

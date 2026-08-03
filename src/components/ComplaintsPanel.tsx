@@ -1,682 +1,1395 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { useAppState } from '../context/AppStateContext';
-import { 
-  MessageSquare, 
-  AlertTriangle, 
-  Plus, 
-  Clock, 
-  User, 
-  MapPin, 
-  CheckCircle, 
-  ArrowRight, 
-  Send,
-  Sparkles,
-  ShieldAlert,
-  Sliders,
-  Check,
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
   ChevronDown,
+  Clock,
+  Loader2,
+  MapPin,
+  MessageSquare,
+  Phone,
+  Plus,
+  Send,
+  ShieldAlert,
   Trash2,
-  Camera,
-  Layers,
-  Phone
-} from 'lucide-react';
+  User,
+  X,
+} from "lucide-react";
+
+type AppRole =
+  | "household"
+  | "collector"
+  | "leader"
+  | "admin";
+
+type ComplaintStatus =
+  | "pending"
+  | "assigned"
+  | "in_progress"
+  | "completed"
+  | "resolved"
+  | "cancelled";
+
+interface ComplaintMessage {
+  id: number;
+  complaint_id: number;
+  sender_id: number;
+  sender_name: string;
+  sender_role: string;
+  message: string;
+  created_at: string;
+}
 
 interface Complaint {
-  id: string;
-  type: string;
-  purok: string;
+  id: number;
+  reported_by: number;
+  reporter_name: string;
+  reporter_email: string;
+  purok_id: number;
+  purok_name: string | null;
+  barangay_id: number | null;
+  barangay_name: string | null;
+  complaint_type: string;
   description: string;
-  creator: string;
-  phone: string;
-  date: string;
-  status: 'Pending Review' | 'Assigned' | 'Scheduled' | 'Resolved';
-  assignedTo?: string;
-  resolutionRemark?: string;
-  chats: { sender: string; text: string; time: string; role: string }[];
-  visualMockUrl?: string;
+  phone: string | null;
+  photo_url: string | null;
+  status: ComplaintStatus;
+  assigned_collector_id: number | null;
+  assigned_collector_name: string | null;
+  resolution_remark: string | null;
+  assigned_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+  messages: ComplaintMessage[];
+}
+
+interface Collector {
+  id: number;
+  full_name: string;
+  email: string;
+  phone: string | null;
+  barangay_id: number | null;
+  barangay_name: string | null;
+  status: string;
+}
+
+interface CurrentUser {
+  id: number;
+  purok_id: number | null;
+  purok_name: string | null;
+  barangay_name: string | null;
+  full_name: string;
+  email: string;
+  role: string;
+  phone: string | null;
 }
 
 interface ComplaintsPanelProps {
-  role: 'household' | 'collector' | 'leader' | 'admin';
+  role: AppRole;
 }
 
-export default function ComplaintsPanel({ role }: ComplaintsPanelProps) {
-  const { 
-    complaints, 
-    addComplaint, 
-    updateComplaintStatus, 
-    addComplaintChat, 
-    deleteComplaint,
-    currentUser,
-    userProfile,
-    approveAddressCorrection
-  } = useAppState();
+const API_BASE = "http://localhost:3001/api";
 
-  const activeUser = currentUser || userProfile;
-  const displayName = activeUser?.name || 'Household';
+function getToken() {
+  return localStorage.getItem("token") || "";
+}
 
-  const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'resolved'>('all');
-  const [showSubmitModal, setShowSubmitModal] = useState(false);
-  const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null);
+async function apiRequest(
+  endpoint: string,
+  options: RequestInit = {},
+) {
+  const token = getToken();
 
-  const parseAddressCorrection = (desc: string) => {
-    const lines = desc.split('\n');
-    let bgy = '';
-    let prk = '';
-    let addr = '';
-    
-    for (const line of lines) {
-      if (line.includes('Requested Barangay:')) {
-        bgy = line.replace('Requested Barangay:', '').trim();
-      } else if (line.includes('Requested Purok:')) {
-        prk = line.replace('Requested Purok:', '').trim();
-      } else if (line.includes('Requested Physical Address:')) {
-        addr = line.replace('Requested Physical Address:', '').trim();
+  if (!token) {
+    throw new Error(
+      "Login session is missing. Please log in again.",
+    );
+  }
+
+  const response = await fetch(
+    `${API_BASE}${endpoint}`,
+    {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        ...(options.headers || {}),
+      },
+    },
+  );
+
+  const data = await response
+    .json()
+    .catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.message || "Request failed.",
+    );
+  }
+
+  return data;
+}
+
+function statusLabel(
+  status: ComplaintStatus,
+) {
+  return status
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) =>
+      letter.toUpperCase(),
+    );
+}
+
+function formatDate(
+  value?: string | null,
+) {
+  if (!value) return "No date";
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString();
+}
+
+function statusClass(
+  status: ComplaintStatus,
+) {
+  switch (status) {
+    case "pending":
+      return "border-amber-200 bg-amber-50 text-amber-700";
+    case "assigned":
+      return "border-blue-200 bg-blue-50 text-blue-700";
+    case "in_progress":
+      return "border-indigo-200 bg-indigo-50 text-indigo-700";
+    case "completed":
+      return "border-cyan-200 bg-cyan-50 text-cyan-700";
+    case "resolved":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "cancelled":
+      return "border-rose-200 bg-rose-50 text-rose-700";
+    default:
+      return "border-slate-200 bg-slate-50 text-slate-700";
+  }
+}
+
+export default function ComplaintsPanel({
+  role,
+}: ComplaintsPanelProps) {
+  const [complaints, setComplaints] =
+    useState<Complaint[]>([]);
+  const [collectors, setCollectors] =
+    useState<Collector[]>([]);
+  const [currentUser, setCurrentUser] =
+    useState<CurrentUser | null>(null);
+
+  const [selectedId, setSelectedId] =
+    useState<number | null>(null);
+
+  const [activeTab, setActiveTab] =
+    useState<
+      "all" | "active" | "resolved"
+    >("all");
+
+  const [loading, setLoading] =
+    useState(true);
+  const [saving, setSaving] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
+  const [success, setSuccess] =
+    useState("");
+
+  const [showSubmitModal, setShowSubmitModal] =
+    useState(false);
+
+  const [newType, setNewType] =
+    useState(
+      "Overflowing Communal Barrel",
+    );
+  const [newDescription, setNewDescription] =
+    useState("");
+  const [newPhone, setNewPhone] =
+    useState("");
+  const [newPhotoUrl, setNewPhotoUrl] =
+    useState("");
+
+  const [selectedCollectorId, setSelectedCollectorId] =
+    useState("");
+  const [resolutionRemark, setResolutionRemark] =
+    useState("");
+  const [chatInput, setChatInput] =
+    useState("");
+
+  const loadData = async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const [complaintData, profileData] =
+        await Promise.all([
+          apiRequest("/complaints"),
+          apiRequest("/auth/me"),
+        ]);
+
+      setComplaints(
+        Array.isArray(
+          complaintData.complaints,
+        )
+          ? complaintData.complaints
+          : [],
+      );
+
+      setCurrentUser(
+        profileData.user || null,
+      );
+
+      if (role === "admin") {
+        const collectorData =
+          await apiRequest(
+            "/admin/collectors",
+          );
+
+        setCollectors(
+          Array.isArray(
+            collectorData.collectors,
+          )
+            ? collectorData.collectors
+            : [],
+        );
+      } else {
+        setCollectors([]);
       }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load complaints.",
+      );
+    } finally {
+      setLoading(false);
     }
-    return { bgy, prk, addr };
   };
 
-  // Submit Form States
-  const [newType, setNewType] = useState('Overflowing Barangay Barrel');
-  const [newPurok, setNewPurok] = useState('Purok 4');
-  const [newDesc, setNewDesc] = useState('');
-  const [newPhone, setNewPhone] = useState('');
-  const [newVisual, setNewVisual] = useState('overspill');
-  const [validationError, setValidationError] = useState('');
-
-  // Auditor/Admin Response Form States
-  const [assignee, setAssignee] = useState('Driver Carlos');
-  const [remark, setRemark] = useState('');
-  const [chatInput, setChatInput] = useState('');
-
-  // Synchronize selection when the global complaints array updates
   useEffect(() => {
-    if (selectedComplaint) {
-      const current = complaints.find(c => c.id === selectedComplaint.id);
-      if (current) {
-        setSelectedComplaint(current as Complaint);
-      } else {
-        setSelectedComplaint(null);
-      }
+    loadData();
+  }, [role]);
+
+  const selectedComplaint =
+    complaints.find(
+      (item) => item.id === selectedId,
+    ) || null;
+
+  useEffect(() => {
+    if (
+      selectedComplaint
+        ?.assigned_collector_id
+    ) {
+      setSelectedCollectorId(
+        String(
+          selectedComplaint
+            .assigned_collector_id,
+        ),
+      );
+    } else {
+      setSelectedCollectorId("");
     }
+
+    setResolutionRemark(
+      selectedComplaint
+        ?.resolution_remark || "",
+    );
+  }, [
+    selectedComplaint?.id,
+    selectedComplaint
+      ?.assigned_collector_id,
+  ]);
+
+  const filteredComplaints =
+    useMemo(() => {
+      return complaints.filter(
+        (item) => {
+          if (activeTab === "active") {
+            return ![
+              "resolved",
+              "cancelled",
+            ].includes(item.status);
+          }
+
+          if (
+            activeTab === "resolved"
+          ) {
+            return (
+              item.status ===
+              "resolved"
+            );
+          }
+
+          return true;
+        },
+      );
+    }, [complaints, activeTab]);
+
+  const stats = useMemo(() => {
+    return {
+      pending: complaints.filter(
+        (item) =>
+          item.status === "pending",
+      ).length,
+      active: complaints.filter(
+        (item) =>
+          [
+            "assigned",
+            "in_progress",
+            "completed",
+          ].includes(item.status),
+      ).length,
+      resolved: complaints.filter(
+        (item) =>
+          item.status === "resolved",
+      ).length,
+    };
   }, [complaints]);
 
-  const handleSubmitComplaint = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newDesc.trim() || !newPhone.trim()) {
-      setValidationError('Please explain the issue and provide a mobile contact number.');
+  const createComplaint = async (
+    event: React.FormEvent,
+  ) => {
+    event.preventDefault();
+
+    if (
+      !newDescription.trim() ||
+      !newPhone.trim()
+    ) {
+      setError(
+        "Description and phone number are required.",
+      );
       return;
     }
 
-    const currentName = role === 'household' ? displayName : 'System Staff';
-    
-    addComplaint({
-      type: newType,
-      purok: newPurok,
-      description: newDesc,
-      creator: currentName,
-      phone: newPhone,
-      date: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
-      status: 'Pending Review',
-      visualMockUrl: newVisual
-    });
-    
-    // Reset Form
-    setNewDesc('');
-    setNewPhone('');
-    setValidationError('');
-    setShowSubmitModal(false);
-  };
+    if (!currentUser?.purok_id) {
+      setError(
+        "Your account has no assigned purok.",
+      );
+      return;
+    }
 
-  const handleUpdateStatus = (id: string, nextStatus: 'Pending Review' | 'Assigned' | 'Scheduled' | 'Resolved') => {
-    updateComplaintStatus(id, nextStatus, nextStatus === 'Assigned' ? assignee : undefined, nextStatus === 'Resolved' && remark ? remark : undefined);
-  };
+    setSaving(true);
+    setError("");
+    setSuccess("");
 
-  const handleSendChat = (e: React.FormEvent, complaintId: string) => {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
+    try {
+      const data = await apiRequest(
+        "/complaints",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            complaint_type:
+              newType,
+            description:
+              newDescription.trim(),
+            phone:
+              newPhone.trim(),
+            photo_url:
+              newPhotoUrl.trim() ||
+              null,
+            purok_id:
+              currentUser.purok_id,
+          }),
+        },
+      );
 
-    const senderName = role === 'household' ? 'Mark Rallos' : role === 'leader' ? 'Purok Leader' : role === 'admin' ? 'Sys Admin' : 'Waste Collector';
+      setSuccess(
+        data.message ||
+          "Complaint submitted.",
+      );
 
-    addComplaintChat(complaintId, chatInput, senderName, role);
-    setChatInput('');
-  };
+      setShowSubmitModal(false);
+      setNewDescription("");
+      setNewPhotoUrl("");
+      setNewPhone(
+        currentUser.phone || "",
+      );
 
-  const handleDeleteComplaint = (id: string) => {
-    deleteComplaint(id);
-    if (selectedComplaint?.id === id) {
-      setSelectedComplaint(null);
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to submit complaint.",
+      );
+    } finally {
+      setSaving(false);
     }
   };
 
-  // Filters
-  const filteredComplaints = complaints.filter(c => {
-    if (role === 'household') {
-      const isOwner = (c.creator || '').toLowerCase() === displayName.toLowerCase() ||
-                      (c.creator || '').toLowerCase().includes(displayName.toLowerCase());
-      if (!isOwner) return false;
+  const assignCollector = async () => {
+    if (
+      !selectedComplaint ||
+      !selectedCollectorId
+    ) {
+      setError(
+        "Select a Garbage Collector first.",
+      );
+      return;
     }
-    
-    if (activeTab === 'pending') return c.status !== 'Resolved';
-    if (activeTab === 'resolved') return c.status === 'Resolved';
-    return true;
-  });
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'Pending Review':
-        return 'bg-amber-500/10 text-amber-500 border border-amber-500/30';
-      case 'Assigned':
-        return 'bg-blue-500/10 text-blue-500 border border-blue-500/30';
-      case 'Scheduled':
-        return 'bg-indigo-500/10 text-indigo-500 border border-indigo-500/30';
-      case 'Resolved':
-        return 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/30';
-      default:
-        return 'bg-slate-500/10 text-slate-500 border border-slate-500/30';
+    setSaving(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const data = await apiRequest(
+        `/complaints/${selectedComplaint.id}/assign`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            collectorId: Number(
+              selectedCollectorId,
+            ),
+          }),
+        },
+      );
+
+      setSuccess(
+        data.message ||
+          "Complaint assigned.",
+      );
+
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to assign complaint.",
+      );
+    } finally {
+      setSaving(false);
     }
   };
+
+  const updateStatus = async (
+    status:
+      | "in_progress"
+      | "completed",
+  ) => {
+    if (!selectedComplaint) return;
+
+    setSaving(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const data = await apiRequest(
+        `/complaints/${selectedComplaint.id}/status`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            status,
+          }),
+        },
+      );
+
+      setSuccess(
+        data.message ||
+          "Complaint updated.",
+      );
+
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to update complaint.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resolveComplaint =
+    async () => {
+      if (!selectedComplaint) return;
+
+      if (
+        !resolutionRemark.trim()
+      ) {
+        setError(
+          "Enter an official resolution remark.",
+        );
+        return;
+      }
+
+      setSaving(true);
+      setError("");
+      setSuccess("");
+
+      try {
+        const data = await apiRequest(
+          `/complaints/${selectedComplaint.id}/resolve`,
+          {
+            method: "PUT",
+            body: JSON.stringify({
+              remarks:
+                resolutionRemark.trim(),
+            }),
+          },
+        );
+
+        setSuccess(
+          data.message ||
+            "Complaint resolved.",
+        );
+
+        await loadData();
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to resolve complaint.",
+        );
+      } finally {
+        setSaving(false);
+      }
+    };
+
+  const sendMessage = async (
+    event: React.FormEvent,
+  ) => {
+    event.preventDefault();
+
+    if (
+      !selectedComplaint ||
+      !chatInput.trim()
+    ) {
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+
+    try {
+      await apiRequest(
+        `/complaints/${selectedComplaint.id}/messages`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            message:
+              chatInput.trim(),
+          }),
+        },
+      );
+
+      setChatInput("");
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to send message.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cancelComplaint =
+    async () => {
+      if (!selectedComplaint) return;
+
+      const confirmed =
+        window.confirm(
+          "Cancel this complaint?",
+        );
+
+      if (!confirmed) return;
+
+      setSaving(true);
+      setError("");
+      setSuccess("");
+
+      try {
+        const data = await apiRequest(
+          `/complaints/${selectedComplaint.id}`,
+          {
+            method: "DELETE",
+          },
+        );
+
+        setSuccess(
+          data.message ||
+            "Complaint cancelled.",
+        );
+
+        setSelectedId(null);
+        await loadData();
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to cancel complaint.",
+        );
+      } finally {
+        setSaving(false);
+      }
+    };
+
+  const canSubmit =
+    role === "household";
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-3 duration-550 pb-20 md:pb-0">
-      
-      {/* HEADER ROW */}
-      <div className="flex flex-col gap-1.5 md:flex-row md:items-center md:justify-between">
+    <div className="space-y-6 pb-20 md:pb-0">
+      <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <div className="flex items-center gap-2 text-amber-600 font-extrabold text-[10px] uppercase tracking-[0.2em]">
-            <AlertTriangle className="w-3.5 h-3.5 animate-pulse" />
-            Barangay Sanitation Feedback
+          <div className="flex items-center gap-2 text-[10px] font-extrabold uppercase tracking-[0.2em] text-amber-600">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            LGU Sanitation Feedback
           </div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight">Complaints & Logs</h1>
-        </div>
-        
-        {/* ADD COMPLAINT ACTION */}
-        <button
-          onClick={() => setShowSubmitModal(true)}
-          className="flex items-center justify-center gap-1.5 bg-amber-600 hover:bg-amber-500 active:scale-95 text-white text-xs font-black uppercase tracking-widest px-5 py-3 rounded-2xl shadow-md transition-all border-none cursor-pointer self-start md:self-auto"
-        >
-          <Plus className="w-4 h-4 shrink-0" />
-          <span>Report New Debris</span>
-        </button>
-      </div>
 
-      {/* METRIC QUICK ACCENTS */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="p-4 bg-white rounded-2xl border border-slate-100 shadow-sm">
-          <p className="text-[9px] font-black tracking-widest text-slate-400 uppercase">Awaiting Sweep</p>
-          <div className="flex items-baseline gap-1 mt-1">
-            <span className="text-2xl font-black text-amber-600">
-              {complaints.filter(c => c.status === 'Pending Review').length}
-            </span>
-            <span className="text-[10px] font-bold text-slate-400">Reports</span>
-          </div>
-        </div>
-        <div className="p-4 bg-white rounded-2xl border border-slate-100 shadow-sm">
-          <p className="text-[9px] font-black tracking-widest text-slate-400 uppercase">Under Action</p>
-          <div className="flex items-baseline gap-1 mt-1">
-            <span className="text-2xl font-black text-indigo-600">
-              {complaints.filter(c => c.status === 'Assigned' || c.status === 'Scheduled').length}
-            </span>
-            <span className="text-[10px] font-bold text-slate-400">Active</span>
-          </div>
-        </div>
-        <div className="p-4 bg-white rounded-2xl border border-slate-100 shadow-sm">
-          <p className="text-[9px] font-black tracking-widest text-slate-400 uppercase">Solved</p>
-          <div className="flex items-baseline gap-1 mt-1">
-            <span className="text-2xl font-black text-emerald-600">
-              {complaints.filter(c => c.status === 'Resolved').length}
-            </span>
-            <span className="text-[10px] font-bold text-slate-400">Success</span>
-          </div>
-        </div>
-      </div>
+          <h1 className="text-3xl font-black tracking-tight text-slate-900">
+            Complaints & Logs
+          </h1>
 
-      {/* TAB SWITCHER */}
-      <div className="flex border-b border-slate-100 gap-6">
-        {(['all', 'pending', 'resolved'] as const).map((tab) => (
+          <p className="mt-1 text-xs text-slate-500">
+            Real complaints, collector assignments, and status history from MySQL.
+          </p>
+        </div>
+
+        {canSubmit && (
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`pb-3.5 text-xs font-black uppercase tracking-widest relative cursor-pointer ${
-              activeTab === tab ? 'text-slate-900 font-extrabold' : 'text-slate-400 hover:text-slate-600'
+            type="button"
+            onClick={() => {
+              setShowSubmitModal(
+                true,
+              );
+              setNewPhone(
+                currentUser?.phone ||
+                  "",
+              );
+            }}
+            className="flex items-center justify-center gap-2 rounded-2xl border-none bg-amber-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white shadow-md"
+          >
+            <Plus className="h-4 w-4" />
+            Report Garbage Issue
+          </button>
+        )}
+      </header>
+
+      {error && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">
+          {success}
+        </div>
+      )}
+
+      <div className="grid grid-cols-3 gap-4">
+        <MetricCard
+          label="Pending Review"
+          value={stats.pending}
+          tone="amber"
+        />
+        <MetricCard
+          label="Under Action"
+          value={stats.active}
+          tone="indigo"
+        />
+        <MetricCard
+          label="Resolved"
+          value={stats.resolved}
+          tone="emerald"
+        />
+      </div>
+
+      <div className="flex gap-5 border-b border-slate-100">
+        {[
+          {
+            id: "all",
+            label: "All",
+          },
+          {
+            id: "active",
+            label: "Active",
+          },
+          {
+            id: "resolved",
+            label: "Resolved",
+          },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() =>
+              setActiveTab(
+                tab.id as typeof activeTab,
+              )
+            }
+            className={`border-b-4 px-1 pb-3 text-xs font-black uppercase tracking-widest ${
+              activeTab === tab.id
+                ? "border-amber-600 text-slate-900"
+                : "border-transparent text-slate-400"
             }`}
           >
-            <span className="capitalize">{tab} Feedback</span>
-            {activeTab === tab && (
-              <motion.div layoutId="complaintsActiveLine" className="absolute bottom-0 left-0 right-0 h-1 bg-amber-600 rounded-full" />
-            )}
+            {tab.label}
           </button>
         ))}
       </div>
 
-      {/* TWO COLUMN GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        
-        {/* LEFT COLUMN: LIST */}
-        <div className="lg:col-span-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">
-              Showing {filteredComplaints.length} Declared Events
-            </span>
-          </div>
-
-          {filteredComplaints.length === 0 ? (
-            <div className="text-center py-12 px-4 bg-white rounded-[2rem] border border-dashed border-slate-200">
-              <MessageSquare className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-              <p className="text-xs font-bold text-slate-700">No complaints registered in this segment.</p>
-              <p className="text-[10px] text-slate-400 mt-1">Use 'Report New Debris' to request a municipal evaluation.</p>
+      <div className="grid gap-8 lg:grid-cols-12">
+        <div className="space-y-3 lg:col-span-5">
+          {loading ? (
+            <div className="rounded-[2rem] border border-slate-100 bg-white p-12 text-center">
+              <Loader2 className="mx-auto h-7 w-7 animate-spin text-amber-600" />
+              <p className="mt-3 text-sm font-bold text-slate-500">
+                Loading complaints...
+              </p>
+            </div>
+          ) : filteredComplaints.length === 0 ? (
+            <div className="rounded-[2rem] border border-dashed border-slate-200 bg-white p-12 text-center">
+              <MessageSquare className="mx-auto h-8 w-8 text-slate-300" />
+              <p className="mt-2 text-xs font-bold text-slate-700">
+                No complaints found.
+              </p>
             </div>
           ) : (
-            <div className="space-y-3 max-h-[550px] overflow-y-auto pr-1">
-              {filteredComplaints.map((item) => (
+            filteredComplaints.map(
+              (item) => (
                 <button
                   key={item.id}
-                  onClick={() => setSelectedComplaint(item)}
-                  className={`w-full text-left p-4.5 bg-white rounded-[1.6rem] border transition-all flex flex-col justify-between cursor-pointer ${
-                    selectedComplaint?.id === item.id 
-                      ? 'border-amber-500 shadow-sm ring-1 ring-amber-500/20' 
-                      : 'border-slate-100 hover:border-slate-200 hover:bg-slate-50/50'
+                  type="button"
+                  onClick={() =>
+                    setSelectedId(
+                      item.id,
+                    )
+                  }
+                  className={`w-full rounded-[1.6rem] border bg-white p-4 text-left transition ${
+                    selectedId ===
+                    item.id
+                      ? "border-amber-500 ring-1 ring-amber-500/20"
+                      : "border-slate-100 hover:border-slate-200"
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-2.5">
-                    <span className="text-xs font-black text-slate-900 leading-tight block">
-                      {item.type}
-                    </span>
-                    <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase text-nowrap select-none shrink-0 ${getStatusBadge(item.status)}`}>
-                      {item.status}
-                    </span>
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-xs font-black text-slate-900">
+                      {
+                        item.complaint_type
+                      }
+                    </p>
+
+                    <StatusBadge
+                      status={item.status}
+                    />
                   </div>
 
-                  <p className="text-[11px] leading-relaxed text-slate-500 mt-2 line-clamp-2">
+                  <p className="mt-2 line-clamp-2 text-[11px] leading-relaxed text-slate-500">
                     {item.description}
                   </p>
 
-                  <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-50 text-[10px]">
-                    <span className="font-bold flex items-center gap-1 text-slate-500">
-                      <User className="w-3.5 h-3.5 text-slate-400" />
-                      {item.creator} ({item.purok})
+                  <div className="mt-3 flex items-center justify-between border-t border-slate-50 pt-3 text-[10px]">
+                    <span className="flex items-center gap-1 font-bold text-slate-500">
+                      <User className="h-3.5 w-3.5" />
+                      {
+                        item.reporter_name
+                      }
                     </span>
-                    <span className="font-mono text-slate-400">{item.date}</span>
+
+                    <span className="text-slate-400">
+                      {formatDate(
+                        item.created_at,
+                      )}
+                    </span>
                   </div>
                 </button>
-              ))}
-            </div>
+              ),
+            )
           )}
         </div>
 
-        {/* RIGHT COLUMN: INTERACTIVE INSPECTION SHEET */}
         <div className="lg:col-span-7">
-          <AnimatePresence mode="wait">
-            {selectedComplaint ? (
-              <motion.div 
-                key={selectedComplaint.id}
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
-                className="bg-white rounded-[2rem] border border-slate-100 p-6 md:p-8 shadow-sm space-y-6"
-              >
-                {/* ID & ACTION ROW */}
-                <div className="flex justify-between items-center pb-4 border-b border-slate-50">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-black font-mono px-3 py-1 bg-slate-100 rounded-lg text-slate-600 border border-slate-200">
-                      {selectedComplaint.id}
-                    </span>
-                    <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase ${getStatusBadge(selectedComplaint.status)}`}>
-                      {selectedComplaint.status}
-                    </span>
-                  </div>
-
-                  {role !== 'household' && (
-                    <button
-                      onClick={() => handleDeleteComplaint(selectedComplaint.id)}
-                      className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition-all cursor-pointer"
-                      title="Dismiss ticket"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-
-                {/* ESSENTIAL COMPLAINT META DATA */}
-                <div className="space-y-2">
-                  <h3 className="text-xl font-black text-slate-900 tracking-tight">{selectedComplaint.type}</h3>
-                  <div className="flex flex-wrap gap-4 text-xs font-bold text-slate-500">
-                    <span className="flex items-center gap-1.5"><MapPin className="w-4 h-4 text-slate-400" /> {selectedComplaint.purok}</span>
-                    <span className="flex items-center gap-1.5"><Phone className="w-4 h-4 text-slate-400" /> {selectedComplaint.phone}</span>
-                    <span className="flex items-center gap-1.5"><Clock className="w-4 h-4 text-slate-400" /> {selectedComplaint.date}</span>
-                  </div>
-                  <p className="bg-slate-50 p-4 rounded-2xl text-xs font-medium text-slate-650 leading-relaxed border border-slate-100 whitespace-pre-line">
-                    {selectedComplaint.description}
-                  </p>
-
-                  {selectedComplaint.type === 'Address & Zone Correction' && (
-                    <div className="p-5 bg-amber-500/5 border border-amber-500/15 rounded-2xl space-y-3.5 mt-3">
-                      <div className="flex items-center gap-2 font-black text-[10px] text-amber-700 uppercase tracking-wider">
-                        <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
-                        Address Change Verification Details
-                      </div>
-                      
-                      {(() => {
-                        const { bgy, prk, addr } = parseAddressCorrection(selectedComplaint.description);
-                        const hasValidData = bgy && prk && addr;
-                        
-                        return (
-                          <div className="space-y-2.5">
-                            <div className="grid grid-cols-2 gap-3 text-[11px]">
-                              <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
-                                <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold block">Target Barangay</span>
-                                <span className="font-extrabold text-slate-850">{bgy || 'Not parsed'}</span>
-                              </div>
-                              <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
-                                <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold block">Target Purok</span>
-                                <span className="font-extrabold text-slate-850">{prk || 'Not parsed'}</span>
-                              </div>
-                            </div>
-                            <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm text-[11px]">
-                              <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold block">Target Physical Address</span>
-                              <span className="font-bold text-slate-850">{addr || 'Not parsed'}</span>
-                            </div>
-
-                            {role !== 'household' && selectedComplaint.status !== 'Resolved' && hasValidData && (
-                              <button
-                                onClick={() => {
-                                  // 1. Apply the correction to context database
-                                  approveAddressCorrection(selectedComplaint.creator, prk, bgy, addr);
-                                  // 2. Mark the complaint resolved with appropriate note
-                                  updateComplaintStatus(
-                                    selectedComplaint.id, 
-                                    'Resolved', 
-                                    undefined, 
-                                    `Approved and officially applied the corrected address: "${addr}, ${prk}, ${bgy}" for ${selectedComplaint.creator}.`
-                                  );
-                                }}
-                                className="w-full mt-1.5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider text-[10px] rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer border-none"
-                              >
-                                <Check className="w-4 h-4" />
-                                Approve & Apply Master Update
-                              </button>
-                            )}
-
-                            {selectedComplaint.status === 'Resolved' && (
-                              <div className="bg-emerald-50 text-emerald-800 p-3 rounded-xl flex items-center gap-2 text-[10px] font-bold border border-emerald-150">
-                                <CheckCircle className="w-4.5 h-4.5 text-emerald-500 shrink-0" />
-                                Address correction has been successfully updated and saved permanently!
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  )}
-                </div>
-
-                {/* DETAILED REVIEWS BY LEADERS/ADMINS */}
-                {role !== 'household' && (
-                  <div className="p-5.5 bg-slate-900 text-slate-100 rounded-[1.8rem] space-y-4 shadow-md border border-slate-800">
-                    <span className="text-[10px] uppercase font-black tracking-widest text-[#5CA28F] block">
-                      Admin Verification Console
-                    </span>
-
-                    {/* Change assigned collector driver */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-black uppercase text-slate-400">Assigned Driver Unit</label>
-                        <div className="relative">
-                          <select
-                            value={assignee}
-                            onChange={(e) => setAssignee(e.target.value)}
-                            className="w-full pl-3.5 pr-10 py-2.5 bg-slate-950 border border-slate-800 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500 text-xs font-bold text-white cursor-pointer appearance-none"
-                          >
-                            <option value="Driver Carlos">Driver Carlos (Route 2)</option>
-                            <option value="Driver Roberto">Driver Roberto (Route 4)</option>
-                            <option value="Driver Alex">Driver Alex (Communal Sweep)</option>
-                          </select>
-                          <ChevronDown className="absolute right-3 top-3 w-4 h-4 text-slate-500 pointer-events-none" />
-                        </div>
-                      </div>
-
-                      {/* Status quick tags */}
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-black uppercase text-slate-400">Direct Actions</label>
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            onClick={() => handleUpdateStatus(selectedComplaint.id, 'Assigned')}
-                            className="px-3.5 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-[10px] font-black uppercase tracking-wider text-white cursor-pointer transition-colors"
-                          >
-                            Assign Unit
-                          </button>
-                          <button
-                            onClick={() => handleUpdateStatus(selectedComplaint.id, 'Resolved')}
-                            className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-[10px] font-black uppercase tracking-wider text-white cursor-pointer transition-colors"
-                          >
-                            Mark Solved
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Input official logs remark */}
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase text-slate-400">Official Clearance Resolution Note</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Sinks driver Roberto cleared illegal cardboard barrels."
-                        value={remark}
-                        onChange={(e) => setRemark(e.target.value)}
-                        className="w-full bg-slate-950 text-white border border-slate-800 rounded-xl px-4 py-2.5 text-xs font-semibold focus:outline-none focus:border-emerald-500"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* CURRENT DISPATCH TRACKING UNIT */}
-                {(selectedComplaint.assignedTo || selectedComplaint.resolutionRemark) && (
-                  <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/10 space-y-2 text-xs">
-                    <span className="font-black uppercase tracking-wide text-[10px] flex items-center gap-1 text-amber-700">
-                      <Sparkles className="w-3.5 h-3.5 shrink-0 text-amber-500" />
-                      Dispatch Action Stamps
-                    </span>
-                    {selectedComplaint.assignedTo && (
-                      <p className="font-semibold text-slate-700">
-                        → Assigned Duty Unit: <span className="font-black text-amber-600">{selectedComplaint.assignedTo}</span>
-                      </p>
-                    )}
-                    {selectedComplaint.resolutionRemark && (
-                      <div className="pt-2 border-t border-slate-100">
-                        <p className="text-[10px] font-extrabold text-emerald-700 uppercase flex items-center gap-1">
-                          <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" /> Resolution Action Sheet
-                        </p>
-                        <p className="text-[11px] font-medium italic text-slate-650 mt-1">"{selectedComplaint.resolutionRemark}"</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* STREAM CHATS CONVERSATION FOR THE REPORT */}
-                <div className="space-y-3.5">
-                  <span className="text-[10px] uppercase font-black tracking-widest text-slate-400 block border-b border-slate-100 pb-2">
-                    Action Trail & Messages ({selectedComplaint.chats.length})
+          {!selectedComplaint ? (
+            <div className="flex min-h-[430px] flex-col items-center justify-center rounded-[2.5rem] border-2 border-dashed border-slate-200 bg-slate-50/50 p-12 text-center">
+              <MessageSquare className="h-10 w-10 text-slate-300" />
+              <p className="mt-3 text-sm font-black text-slate-700">
+                Select a complaint
+              </p>
+              <p className="mt-1 max-w-xs text-[11px] text-slate-500">
+                Review complaint details, assignment, messages, and status.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-6 rounded-[2rem] border border-slate-100 bg-white p-6 shadow-sm md:p-8">
+              <div className="flex items-center justify-between border-b border-slate-50 pb-4">
+                <div className="flex items-center gap-2">
+                  <span className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 font-mono text-xs font-black text-slate-600">
+                    CMP-
+                    {
+                      selectedComplaint.id
+                    }
                   </span>
 
-                  <div className="space-y-3 max-h-[180px] overflow-y-auto pr-1">
-                    {selectedComplaint.chats.map((chat, idx) => (
-                      <div key={idx} className={`flex gap-3 max-w-[85%] ${chat.role === role ? 'ml-auto flex-row-reverse' : ''}`}>
-                        <div className={`p-3 rounded-2xl text-xs font-semibold ${
-                          chat.role === role 
-                            ? 'bg-amber-600 text-white rounded-tr-none' 
-                            : 'bg-slate-100 text-slate-800 rounded-tl-none'
-                        }`}>
-                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-wide mb-1 leading-none text-opacity-80">
-                            {chat.sender}
-                          </p>
-                          <p>{chat.text}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Send chat message */}
-                  <form onSubmit={(e) => handleSendChat(e, selectedComplaint.id)} className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="Type reference message..."
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      className="flex-1 bg-slate-50 text-slate-800 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-semibold focus:outline-none focus:border-amber-500/80 focus:bg-white"
-                    />
-                    <button
-                      type="submit"
-                      className="p-3 bg-slate-900 text-white rounded-xl hover:bg-slate-800 cursor-pointer transition-colors"
-                    >
-                      <Send className="w-4 h-4" />
-                    </button>
-                  </form>
-                </div>
-
-              </motion.div>
-            ) : (
-              <div className="bg-slate-50/50 rounded-[2.5rem] border-2 border-dashed border-slate-200 p-12 text-center text-slate-400 h-96 flex flex-col justify-center items-center">
-                <MessageSquare className="w-10 h-10 text-slate-350 mb-3 animate-bounce" />
-                <p className="text-sm font-black text-slate-700">Verification Ledger Window</p>
-                <p className="text-[11px] max-w-xs mt-1 text-slate-450 leading-relaxed">
-                  Select any active rubbish report from the left sidebar to audit GPS drivers, append chat files, or log resolution stamps.
-                </p>
-              </div>
-            )}
-          </AnimatePresence>
-        </div>
-
-      </div>
-
-      {/* SUBMIT COMPLAINT SLIDEOUT MODAL */}
-      <AnimatePresence>
-        {showSubmitModal && (
-          <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-[2.5rem] max-w-lg w-full p-6 md:p-8 shadow-2xl relative border border-slate-100"
-            >
-              <h2 className="text-2xl font-black text-slate-900 tracking-tight mb-2">Report Garbage Issue</h2>
-              <p className="text-xs text-slate-500 mb-6 font-medium">Please provide accurate info for immediate barangay dispatch.</p>
-
-              {validationError && (
-                <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 text-rose-500 font-bold rounded-xl text-xs flex items-center gap-2 mb-4">
-                  <ShieldAlert className="w-4 h-4 text-rose-500 shrink-0" />
-                  <span>{validationError}</span>
-                </div>
-              )}
-
-              <form onSubmit={handleSubmitComplaint} className="space-y-4">
-                {/* Type Selection */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 block ml-1">Issue Category</label>
-                  <div className="relative">
-                    <select
-                      value={newType}
-                      onChange={(e) => setNewType(e.target.value)}
-                      className="w-full pl-4 pr-10 py-3 bg-slate-50 border border-slate-250 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-500 text-xs font-extrabold text-slate-800 appearance-none cursor-pointer"
-                    >
-                      <option value="Overflowing Barangay Barrel">Overflowing Communal Barrel</option>
-                      <option value="Missed Trash Pickup">Missed Weekly Curbside Truck</option>
-                      <option value="Illegal Littering Alert">Illegal Littering / Dump Site</option>
-                      <option value="Damaged Resident Trash Bin">Damaged Resident Pickup Barrel</option>
-                    </select>
-                    <ChevronDown className="absolute right-4 top-3.5 w-4 h-4 text-slate-500 pointer-events-none" />
-                  </div>
-                </div>
-
-                {/* Purok and Phone in responsive 2 cols */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 block ml-1">Assigned Purok</label>
-                    <div className="relative">
-                      <select
-                        value={newPurok}
-                        onChange={(e) => setNewPurok(e.target.value)}
-                        className="w-full pl-4 pr-10 py-3 bg-slate-50 border border-slate-250 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-500 text-xs font-extrabold text-slate-800 appearance-none cursor-pointer"
-                      >
-                        {Array.from({ length: 9 }, (_, i) => `Purok ${i + 1}`).map(p => (
-                          <option key={p} value={p}>{p}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="absolute right-4 top-3.5 w-4 h-4 text-slate-500 pointer-events-none" />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 block ml-1">Contact Phone</label>
-                    <input
-                      type="tel"
-                      placeholder="+63 9xx xxx xxxx"
-                      value={newPhone}
-                      onChange={(e) => setNewPhone(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 text-xs font-semibold text-slate-800"
-                    />
-                  </div>
-                </div>
-
-                {/* Explanation text */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 block ml-1">Explain Details & Description</label>
-                  <textarea
-                    rows={3}
-                    placeholder="Provide landmarks (e.g., corner of Maple and Acacia Road) and specify any hazards..."
-                    value={newDesc}
-                    onChange={(e) => setNewDesc(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 text-xs font-semibold text-slate-800"
+                  <StatusBadge
+                    status={
+                      selectedComplaint.status
+                    }
                   />
                 </div>
 
-                {/* Camera mock snap slot */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 block ml-1">Attach Geo-tagged Photo</label>
-                  <div className="flex gap-2.5">
-                    {(['overspill', 'missed', 'illegal', 'bin_fault'] as const).map((v) => (
+                {(role === "admin" ||
+                  role ===
+                    "household") &&
+                  ![
+                    "resolved",
+                    "cancelled",
+                  ].includes(
+                    selectedComplaint.status,
+                  ) && (
+                    <button
+                      type="button"
+                      onClick={
+                        cancelComplaint
+                      }
+                      disabled={saving}
+                      className="rounded-xl p-2 text-rose-500 hover:bg-rose-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
+              </div>
+
+              <section className="space-y-3">
+                <h2 className="text-xl font-black text-slate-900">
+                  {
+                    selectedComplaint.complaint_type
+                  }
+                </h2>
+
+                <div className="flex flex-wrap gap-4 text-xs font-bold text-slate-500">
+                  <span className="flex items-center gap-1.5">
+                    <MapPin className="h-4 w-4" />
+                    {[
+                      selectedComplaint.purok_name,
+                      selectedComplaint.barangay_name,
+                    ]
+                      .filter(Boolean)
+                      .join(", ")}
+                  </span>
+
+                  <span className="flex items-center gap-1.5">
+                    <Phone className="h-4 w-4" />
+                    {selectedComplaint.phone ||
+                      "No phone"}
+                  </span>
+
+                  <span className="flex items-center gap-1.5">
+                    <Clock className="h-4 w-4" />
+                    {formatDate(
+                      selectedComplaint.created_at,
+                    )}
+                  </span>
+                </div>
+
+                <p className="whitespace-pre-line rounded-2xl border border-slate-100 bg-slate-50 p-4 text-xs font-medium leading-relaxed text-slate-700">
+                  {
+                    selectedComplaint.description
+                  }
+                </p>
+
+                {selectedComplaint.photo_url && (
+                  <img
+                    src={
+                      selectedComplaint.photo_url
+                    }
+                    alt="Complaint evidence"
+                    className="max-h-64 w-full rounded-2xl border border-slate-100 object-cover"
+                  />
+                )}
+              </section>
+
+              {role === "admin" && (
+                <section className="space-y-4 rounded-[1.8rem] border border-slate-800 bg-slate-900 p-5 text-white">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-emerald-400">
+                    Barangay Captain Console
+                  </p>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className="text-[9px] font-black uppercase text-slate-400">
+                      Garbage Collector
+                      <div className="relative mt-2">
+                        <select
+                          value={
+                            selectedCollectorId
+                          }
+                          onChange={(
+                            event,
+                          ) =>
+                            setSelectedCollectorId(
+                              event
+                                .target
+                                .value,
+                            )
+                          }
+                          className="w-full appearance-none rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 pr-10 text-xs font-bold text-white"
+                        >
+                          <option value="">
+                            Select collector
+                          </option>
+
+                          {collectors.map(
+                            (
+                              collector,
+                            ) => (
+                              <option
+                                key={
+                                  collector.id
+                                }
+                                value={
+                                  collector.id
+                                }
+                              >
+                                {
+                                  collector.full_name
+                                }
+                                {collector.barangay_name
+                                  ? ` — ${collector.barangay_name}`
+                                  : ""}
+                              </option>
+                            ),
+                          )}
+                        </select>
+
+                        <ChevronDown className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-slate-500" />
+                      </div>
+                    </label>
+
+                    <div className="flex items-end">
                       <button
                         type="button"
-                        key={v}
-                        onClick={() => setNewVisual(v)}
-                        className={`flex-1 p-2 border text-center rounded-xl transition-all cursor-pointer select-none ${
-                          newVisual === v 
-                            ? 'border-amber-500 bg-amber-500/10 text-amber-700' 
-                            : 'border-slate-200 bg-slate-50 text-slate-550'
-                        }`}
+                        onClick={
+                          assignCollector
+                        }
+                        disabled={
+                          saving ||
+                          !selectedCollectorId
+                        }
+                        className="w-full rounded-xl bg-blue-600 px-4 py-3 text-xs font-black uppercase text-white disabled:opacity-50"
                       >
-                        <Camera className="w-5 h-5 mx-auto mb-1 opacity-70" />
-                        <span className="text-[8px] font-black uppercase block capitalize">{v === 'bin_fault' ? 'damaged' : v}</span>
+                        Assign Collector
                       </button>
-                    ))}
+                    </div>
                   </div>
-                </div>
 
-                {/* Submit & Cancel footer actions */}
-                <div className="pt-4 flex gap-3 text-xs font-black uppercase tracking-widest justify-end">
+                  <label className="block text-[9px] font-black uppercase text-slate-400">
+                    Official Resolution Note
+                    <input
+                      type="text"
+                      value={
+                        resolutionRemark
+                      }
+                      onChange={(
+                        event,
+                      ) =>
+                        setResolutionRemark(
+                          event.target
+                            .value,
+                        )
+                      }
+                      placeholder="Describe the final verified action."
+                      className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white"
+                    />
+                  </label>
+
                   <button
                     type="button"
-                    onClick={() => setShowSubmitModal(false)}
-                    className="px-6 py-3.5 text-slate-500 hover:bg-slate-100 rounded-xl cursor-pointer"
+                    onClick={
+                      resolveComplaint
+                    }
+                    disabled={
+                      saving ||
+                      selectedComplaint.status ===
+                        "resolved"
+                    }
+                    className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-xs font-black uppercase text-white disabled:opacity-50"
                   >
-                    Cancel
+                    Mark Resolved
                   </button>
-                  <button
-                    type="submit"
-                    className="px-6 py-3.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl cursor-pointer shadow-md border-none flex items-center gap-1"
-                  >
-                    <Send className="w-3.5 h-3.5 shrink-0" />
-                    <span>File Dispatch Report</span>
-                  </button>
+                </section>
+              )}
+
+              {role ===
+                "collector" && (
+                <section className="space-y-3 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-blue-700">
+                    Collector Task Actions
+                  </p>
+
+                  {selectedComplaint.status ===
+                    "assigned" && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateStatus(
+                          "in_progress",
+                        )
+                      }
+                      disabled={saving}
+                      className="w-full rounded-xl bg-amber-500 px-4 py-3 text-xs font-black uppercase text-white disabled:opacity-50"
+                    >
+                      Start Task
+                    </button>
+                  )}
+
+                  {selectedComplaint.status ===
+                    "in_progress" && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateStatus(
+                          "completed",
+                        )
+                      }
+                      disabled={saving}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-xs font-black uppercase text-white disabled:opacity-50"
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      Mark Completed
+                    </button>
+                  )}
+
+                  {selectedComplaint.status ===
+                    "completed" && (
+                    <div className="rounded-xl bg-emerald-100 px-4 py-3 text-center text-xs font-black text-emerald-700">
+                      Waiting for Barangay Captain verification
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {selectedComplaint.assigned_collector_name && (
+                <section className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-xs">
+                  <p className="font-black uppercase tracking-wide text-amber-700">
+                    Assigned Garbage Collector
+                  </p>
+                  <p className="mt-1 font-bold text-slate-700">
+                    {
+                      selectedComplaint.assigned_collector_name
+                    }
+                  </p>
+                </section>
+              )}
+
+              {selectedComplaint.resolution_remark && (
+                <section className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-xs">
+                  <p className="font-black uppercase tracking-wide text-emerald-700">
+                    Resolution
+                  </p>
+                  <p className="mt-1 whitespace-pre-line font-medium text-slate-700">
+                    {
+                      selectedComplaint.resolution_remark
+                    }
+                  </p>
+                </section>
+              )}
+
+              <section className="space-y-3">
+                <p className="border-b border-slate-100 pb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  Action Trail & Messages (
+                  {
+                    selectedComplaint.messages
+                      .length
+                  }
+                  )
+                </p>
+
+                <div className="max-h-[220px] space-y-3 overflow-y-auto pr-1">
+                  {selectedComplaint.messages.map(
+                    (message) => (
+                      <div
+                        key={
+                          message.id
+                        }
+                        className="rounded-2xl bg-slate-100 p-3 text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-black text-slate-700">
+                            {
+                              message.sender_name
+                            }
+                          </p>
+                          <p className="text-[9px] text-slate-400">
+                            {formatDate(
+                              message.created_at,
+                            )}
+                          </p>
+                        </div>
+
+                        <p className="mt-1 text-slate-700">
+                          {
+                            message.message
+                          }
+                        </p>
+                      </div>
+                    ),
+                  )}
+
+                  {selectedComplaint.messages.length ===
+                    0 && (
+                    <p className="text-xs text-slate-400">
+                      No messages yet.
+                    </p>
+                  )}
                 </div>
 
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+                <form
+                  onSubmit={
+                    sendMessage
+                  }
+                  className="flex gap-2"
+                >
+                  <input
+                    type="text"
+                    value={
+                      chatInput
+                    }
+                    onChange={(
+                      event,
+                    ) =>
+                      setChatInput(
+                        event.target
+                          .value,
+                      )
+                    }
+                    placeholder="Type message..."
+                    className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-semibold text-slate-800"
+                  />
 
+                  <button
+                    type="submit"
+                    disabled={
+                      saving ||
+                      !chatInput.trim()
+                    }
+                    className="rounded-xl bg-slate-900 p-3 text-white disabled:opacity-50"
+                  >
+                    <Send className="h-4 w-4" />
+                  </button>
+                </form>
+              </section>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {showSubmitModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-[2rem] border border-slate-100 bg-white p-6 shadow-2xl md:p-8">
+            <div className="mb-6 flex items-start justify-between">
+              <div>
+                <h2 className="text-2xl font-black text-slate-900">
+                  Report Garbage Issue
+                </h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  Your registered barangay and purok will be used automatically.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setShowSubmitModal(
+                    false,
+                  )
+                }
+                className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={
+                createComplaint
+              }
+              className="space-y-4"
+            >
+              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500">
+                Issue Category
+                <select
+                  value={newType}
+                  onChange={(
+                    event,
+                  ) =>
+                    setNewType(
+                      event.target
+                        .value,
+                    )
+                  }
+                  className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-extrabold text-slate-800"
+                >
+                  <option value="Overflowing Communal Barrel">
+                    Overflowing Communal Barrel
+                  </option>
+                  <option value="Missed Trash Pickup">
+                    Missed Trash Pickup
+                  </option>
+                  <option value="Illegal Littering Alert">
+                    Illegal Littering
+                  </option>
+                  <option value="Damaged Garbage Bin">
+                    Damaged Garbage Bin
+                  </option>
+                </select>
+              </label>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  Assigned Area
+                  <input
+                    type="text"
+                    value={[
+                      currentUser?.purok_name,
+                      currentUser?.barangay_name,
+                    ]
+                      .filter(Boolean)
+                      .join(", ")}
+                    disabled
+                    className="mt-2 w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-100 p-3 text-xs font-bold text-slate-500"
+                  />
+                </label>
+
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  Contact Phone
+                  <input
+                    type="text"
+                    value={newPhone}
+                    onChange={(
+                      event,
+                    ) =>
+                      setNewPhone(
+                        event.target
+                          .value,
+                      )
+                    }
+                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-semibold text-slate-800"
+                  />
+                </label>
+              </div>
+
+              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500">
+                Description
+                <textarea
+                  rows={4}
+                  value={
+                    newDescription
+                  }
+                  onChange={(
+                    event,
+                  ) =>
+                    setNewDescription(
+                      event.target
+                        .value,
+                    )
+                  }
+                  placeholder="Describe the exact location and issue."
+                  className="mt-2 w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-semibold text-slate-800"
+                />
+              </label>
+
+              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500">
+                Photo URL or Path (optional)
+                <input
+                  type="text"
+                  value={
+                    newPhotoUrl
+                  }
+                  onChange={(
+                    event,
+                  ) =>
+                    setNewPhotoUrl(
+                      event.target
+                        .value,
+                    )
+                  }
+                  placeholder="/uploads/evidence.jpg"
+                  className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-semibold text-slate-800"
+                />
+              </label>
+
+              <button
+                type="submit"
+                disabled={saving}
+                className="flex w-full items-center justify-center gap-2 rounded-xl border-none bg-amber-600 py-3 text-xs font-black uppercase tracking-widest text-white disabled:opacity-50"
+              >
+                {saving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+                Submit Complaint
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone:
+    | "amber"
+    | "indigo"
+    | "emerald";
+}) {
+  const valueClass = {
+    amber: "text-amber-600",
+    indigo: "text-indigo-600",
+    emerald: "text-emerald-600",
+  }[tone];
+
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+      <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+        {label}
+      </p>
+      <p
+        className={`mt-1 text-2xl font-black ${valueClass}`}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function StatusBadge({
+  status,
+}: {
+  status: ComplaintStatus;
+}) {
+  return (
+    <span
+      className={`rounded-full border px-2.5 py-1 text-[9px] font-black uppercase ${statusClass(
+        status,
+      )}`}
+    >
+      {statusLabel(status)}
+    </span>
   );
 }

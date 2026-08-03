@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "db:setup": "tsx scripts/setupDatabase.ts"
+    "db:setup": "tsx scripts/setupDatabase.ts",
+    "create-super-admin": "tsx scripts/createSuperAdmin.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

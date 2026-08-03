@@ -10,6 +10,8 @@ import inspectionsRouter from "./routes/inspections";
 import garbageBinsRouter from "./routes/garbageBins.js";
 import collectionSchedulesRouter from "./routes/collectionSchedules.js";
 import collectionRequestsRouter from "./routes/collectionRequests.js";
+import complaintsRouter from "./routes/complaints.js";
+import adminRouter from "./routes/admin.js";
 dotenv.config();
 
 
@@ -32,6 +34,8 @@ app.use("/api/inspections", inspectionsRouter);
 app.use("/api/garbage-bins", garbageBinsRouter);
 app.use("/api/collection-schedules", collectionSchedulesRouter);
 app.use("/api/collection-requests", collectionRequestsRouter);
+app.use("/api/complaints", complaintsRouter);
+app.use("/api/admin", adminRouter);
 
 // Initialize Gemini client on the server securely
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({

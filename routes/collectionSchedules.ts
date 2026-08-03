@@ -279,5 +279,66 @@ router.delete(
     }
   },
 );
+/**
+ * GET MY BARANGAY COLLECTION SCHEDULE
+ */
+router.get(
+  "/my-schedule",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    try {
+      const purokId = req.user?.purok_id;
 
+      if (!purokId) {
+        return res.status(400).json({
+          success: false,
+          message: "No assigned purok.",
+        });
+      }
+
+      const [rows]: any = await db.query(
+        `
+        SELECT
+          b.name AS barangay_name,
+          s.day_of_week,
+          s.start_time,
+          s.end_time,
+          s.notes
+
+        FROM puroks p
+
+        INNER JOIN barangays b
+          ON b.id = p.barangay_id
+
+        INNER JOIN barangay_collection_schedules s
+          ON s.barangay_id = b.id
+
+        WHERE p.id = ?
+
+        LIMIT 1
+        `,
+        [purokId],
+      );
+
+      if (!rows.length) {
+        return res.status(404).json({
+          success: false,
+          message: "No collection schedule found.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        schedule: rows[0],
+      });
+    } catch (error) {
+      console.error(error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to load schedule.",
+      });
+    }
+  },
+);
 export default router;
