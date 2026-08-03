@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Shield, Users, Activity, Package, Map, CheckCircle, CreditCard, LoaderCircle, XCircle } from 'lucide-react';
+import { Shield, Users, Activity, Package, Map, CheckCircle, CreditCard, LoaderCircle, XCircle, Trash2, MessageSquare, UserRoundCheck } from 'lucide-react';
 
 interface PendingCollector {
   id: number;
@@ -12,6 +12,14 @@ interface PendingCollector {
   created_at: string;
 }
 
+interface DashboardSummary {
+  residents: number;
+  collectors: number;
+  purokLeaders: number;
+  garbageBins: number;
+  pendingComplaints: number;
+}
+
 interface AdminDashboardProps {
   setCurrentScreen: (screen: any) => void;
 }
@@ -22,6 +30,63 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
   const [collectorError, setCollectorError] = useState('');
   const [collectorMessage, setCollectorMessage] = useState('');
   const [reviewingId, setReviewingId] = useState<number | null>(null);
+
+  const [summary, setSummary] = useState<DashboardSummary>({
+    residents: 0,
+    collectors: 0,
+    purokLeaders: 0,
+    garbageBins: 0,
+    pendingComplaints: 0,
+  });
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState('');
+
+  const loadDashboardSummary = useCallback(async () => {
+    const token =
+      localStorage.getItem('token') || sessionStorage.getItem('token') || '';
+
+    if (!token) {
+      setSummaryError('Admin session not found. Please sign in again.');
+      setSummaryLoading(false);
+      return;
+    }
+
+    try {
+      setSummaryLoading(true);
+      setSummaryError('');
+
+      const response = await fetch('/api/admin/dashboard-summary', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.message || 'Unable to load dashboard summary.',
+        );
+      }
+
+      setSummary({
+        residents: Number(data?.summary?.residents || 0),
+        collectors: Number(data?.summary?.collectors || 0),
+        purokLeaders: Number(data?.summary?.purokLeaders || 0),
+        garbageBins: Number(data?.summary?.garbageBins || 0),
+        pendingComplaints: Number(data?.summary?.pendingComplaints || 0),
+      });
+    } catch (error) {
+      console.error('Dashboard summary fetch error:', error);
+      setSummaryError(
+        error instanceof Error
+          ? error.message
+          : 'Cannot connect to the server.',
+      );
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, []);
 
   const loadPendingCollectors = useCallback(async () => {
     const token =
@@ -62,8 +127,11 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
   }, []);
 
   useEffect(() => {
-    void loadPendingCollectors();
-  }, [loadPendingCollectors]);
+    void Promise.all([
+      loadDashboardSummary(),
+      loadPendingCollectors(),
+    ]);
+  }, [loadDashboardSummary, loadPendingCollectors]);
 
   const reviewCollector = async (
     collectorId: number,
@@ -124,10 +192,46 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
   const pendingPayments = payments.filter((p: any) => p.status === 'Pending Verification');
 
   const systemMetrics = [
-    { label: 'Pending Collectors', value: String(pendingCollectors.length), trend: 'Needs Review', icon: Users, color: 'blue' },
-    { label: 'Active Trucks', value: '18', trend: 'Online', icon: Activity, color: 'emerald' },
-    { label: 'Waste Vol (MT)', value: '124.5', trend: '-2.4%', icon: Package, color: 'amber' },
-    { label: 'Clearance Queue', value: String(pendingAdminSign.length), trend: `${totalRequests} Total`, icon: Shield, color: 'indigo' },
+    {
+      label: 'Residents',
+      value: summaryLoading ? '—' : String(summary.residents),
+      trend: 'Active',
+      icon: Users,
+      iconClass: 'bg-blue-50 text-blue-600',
+      trendClass: 'text-blue-600',
+    },
+    {
+      label: 'Collectors',
+      value: summaryLoading ? '—' : String(summary.collectors),
+      trend: 'Active',
+      icon: Activity,
+      iconClass: 'bg-emerald-50 text-emerald-600',
+      trendClass: 'text-emerald-600',
+    },
+    {
+      label: 'Purok Leaders',
+      value: summaryLoading ? '—' : String(summary.purokLeaders),
+      trend: 'Assigned',
+      icon: UserRoundCheck,
+      iconClass: 'bg-indigo-50 text-indigo-600',
+      trendClass: 'text-indigo-600',
+    },
+    {
+      label: 'Garbage Bins',
+      value: summaryLoading ? '—' : String(summary.garbageBins),
+      trend: 'Registered',
+      icon: Trash2,
+      iconClass: 'bg-amber-50 text-amber-600',
+      trendClass: 'text-amber-600',
+    },
+    {
+      label: 'Pending Complaints',
+      value: summaryLoading ? '—' : String(summary.pendingComplaints),
+      trend: 'Needs Action',
+      icon: MessageSquare,
+      iconClass: 'bg-rose-50 text-rose-600',
+      trendClass: 'text-rose-600',
+    },
   ];
 
   return (
@@ -137,21 +241,34 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
           <Shield className="w-3 h-3" />
           System Control Panel
         </div>
-        <h1 className="text-4xl font-black text-slate-900 tracking-tight">Admin</h1>
+        <h1 className="text-4xl font-black text-slate-900 tracking-tight">Barangay Dashboard</h1>
       </header>
 
+      {summaryError && (
+        <div className="flex flex-col gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700 sm:flex-row sm:items-center sm:justify-between">
+          <span>{summaryError}</span>
+          <button
+            type="button"
+            onClick={() => void loadDashboardSummary()}
+            className="text-xs font-black uppercase tracking-wider text-rose-700 underline"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Global Metrics Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-5">
         {systemMetrics.map((m, i) => (
           <div key={i} className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col justify-between">
-            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-4 bg-${m.color}-50 text-${m.color}-500`}>
-              <m.icon className="w-6 h-6" />
+            <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-2xl ${m.iconClass}`}>
+              <m.icon className="h-6 w-6" />
             </div>
             <div>
               <p className="text-3xl font-black text-slate-900 leading-none">{m.value}</p>
               <div className="flex items-center justify-between mt-2">
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{m.label}</p>
-                <p className={`text-[10px] font-black text-${m.color}-600`}>{m.trend}</p>
+                <p className={`text-[10px] font-black ${m.trendClass}`}>{m.trend}</p>
               </div>
             </div>
           </div>
@@ -312,7 +429,10 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
               <h2 className="text-xl font-black text-slate-800">Collector Verification</h2>
               <button
                 type="button"
-                onClick={() => void loadPendingCollectors()}
+                onClick={() => {
+                  void loadPendingCollectors();
+                  void loadDashboardSummary();
+                }}
                 className="text-[10px] font-black uppercase tracking-wider text-emerald-600 hover:text-emerald-700"
               >
                 Refresh

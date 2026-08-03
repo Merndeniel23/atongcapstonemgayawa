@@ -1,1567 +1,808 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import crypto from "crypto";
-import { OAuth2Client } from "google-auth-library";
-import { Resend } from "resend";
 import { db } from "../config/db.js";
-import {
-  requireAuth,
-  type AuthRequest,
-} from "../middleware/auth.js";
+import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
 
-const googleClient = new OAuth2Client(
-  process.env.GOOGLE_CLIENT_ID,
-);
+type ManagedRole = "resident" | "purok_leader" | "collector";
 
-const resend = new Resend(
-  process.env.RESEND_API_KEY,
-);
+function requireBarangayCaptain(req: AuthRequest, res: any): boolean {
+  const role = req.user?.role;
 
-function createToken(user: {
-  id: number;
-  role: string;
-  email: string;
-  barangay_id?: number | null;
-  purok_id?: number | null;
-}) {
-  return jwt.sign(
-    {
-      id: user.id,
-      role: user.role,
-      email: user.email,
-      barangay_id:
-        user.barangay_id ?? null,
-      purok_id:
-        user.purok_id ?? null,
-    },
-    process.env.JWT_SECRET ||
-      "change-me",
-    {
-      expiresIn: "12h",
-    },
-  );
+  if (role !== "admin" && role !== "super_admin") {
+    res.status(403).json({
+      success: false,
+      message: "Administrator access is required.",
+    });
+    return false;
+  }
+
+  return true;
+}
+function parsePositiveInteger(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-/**
- * PUBLIC: Load real barangays and puroks for registration.
- */
-router.get(
-  "/registration-locations",
-  async (_req, res) => {
-    try {
-      const [barangays] =
-        await db.query<any[]>(
-          `
-          SELECT
-            id,
-            name
-          FROM barangays
-          WHERE is_active = 1
-          ORDER BY name ASC
-          `,
-        );
+function normalizeRole(value: unknown): ManagedRole | null {
+  const role = String(value || "").trim().toLowerCase();
+  return role === "resident" || role === "purok_leader" || role === "collector"
+    ? role
+    : null;
+}
 
-      const [puroks] =
-        await db.query<any[]>(
+
+router.get(
+  "/dashboard-summary",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    try {
+      if (!requireBarangayCaptain(req, res)) return;
+
+      const userId = parsePositiveInteger(req.user?.id);
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required.",
+        });
+      }
+
+      const [viewerRows]: any = await db.query(
+        `
+        SELECT
+          id,
+          role,
+          barangay_id
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+        `,
+        [userId],
+      );
+
+      const viewer = viewerRows[0];
+
+      if (!viewer) {
+        return res.status(401).json({
+          success: false,
+          message: "Administrator account was not found.",
+        });
+      }
+
+      const isSuperAdmin = viewer.role === "super_admin";
+      const barangayId = parsePositiveInteger(viewer.barangay_id);
+
+      if (!isSuperAdmin && !barangayId) {
+        return res.status(400).json({
+          success: false,
+          message: "The Barangay Captain account has no assigned barangay.",
+        });
+      }
+
+      const userWhere = isSuperAdmin
+        ? ""
+        : "AND u.barangay_id = ?";
+
+      const complaintWhere = isSuperAdmin
+        ? ""
+        : "AND p.barangay_id = ?";
+
+      const binWhere = isSuperAdmin
+        ? ""
+        : "AND p.barangay_id = ?";
+
+      const userParams = isSuperAdmin ? [] : [barangayId];
+      const complaintParams = isSuperAdmin ? [] : [barangayId];
+      const binParams = isSuperAdmin ? [] : [barangayId];
+
+      const [
+        residentsResult,
+        collectorsResult,
+        leadersResult,
+        binsResult,
+        complaintsResult,
+      ] = await Promise.all([
+        db.query(
           `
-          SELECT
-            p.id,
-            p.barangay_id,
-            p.name,
-            b.name AS barangay_name
-          FROM puroks p
-          INNER JOIN barangays b
-            ON b.id = p.barangay_id
-          WHERE b.is_active = 1
-          ORDER BY
-            b.name ASC,
-            p.name ASC
+          SELECT COUNT(*) AS total
+          FROM users u
+          WHERE u.role = 'resident'
+            AND u.status = 'active'
+            ${userWhere}
           `,
-        );
+          userParams,
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS total
+          FROM users u
+          WHERE u.role = 'collector'
+            AND u.status = 'active'
+            ${userWhere}
+          `,
+          userParams,
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS total
+          FROM users u
+          WHERE u.role = 'purok_leader'
+            AND u.status = 'active'
+            ${userWhere}
+          `,
+          userParams,
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS total
+          FROM garbage_bins gb
+          LEFT JOIN puroks p
+            ON p.id = gb.purok_id
+          WHERE 1 = 1
+            ${binWhere}
+          `,
+          binParams,
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS total
+          FROM complaints c
+          LEFT JOIN puroks p
+            ON p.id = c.purok_id
+          WHERE c.status = 'pending'
+            ${complaintWhere}
+          `,
+          complaintParams,
+        ),
+      ]);
+
+      const residentsRows: any = residentsResult[0];
+      const collectorsRows: any = collectorsResult[0];
+      const leadersRows: any = leadersResult[0];
+      const binsRows: any = binsResult[0];
+      const complaintsRows: any = complaintsResult[0];
 
       return res.json({
         success: true,
-        barangays,
-        puroks,
+        scope: isSuperAdmin ? "municipality" : "barangay",
+        barangayId: isSuperAdmin ? null : barangayId,
+        summary: {
+          residents: Number(residentsRows[0]?.total || 0),
+          collectors: Number(collectorsRows[0]?.total || 0),
+          purokLeaders: Number(leadersRows[0]?.total || 0),
+          garbageBins: Number(binsRows[0]?.total || 0),
+          pendingComplaints: Number(complaintsRows[0]?.total || 0),
+        },
       });
     } catch (error) {
-      console.error(
-        "Registration locations error:",
-        error,
-      );
+      console.error("Admin dashboard summary error:", error);
 
       return res.status(500).json({
         success: false,
-        message:
-          "Unable to load registration locations.",
+        message: "Unable to load dashboard summary.",
       });
     }
   },
 );
 
-router.post(
-  "/login",
-  async (req, res) => {
+
+router.get(
+  "/recent-activities",
+  requireAuth,
+  async (req: AuthRequest, res) => {
     try {
-      const email = String(
-        req.body.email || "",
-      )
-        .trim()
-        .toLowerCase();
+      if (!requireBarangayCaptain(req, res)) return;
 
-      const password = String(
-        req.body.password || "",
-      );
+      const userId = parsePositiveInteger(req.user?.id);
 
-      if (!email || !password) {
-        return res.status(400).json({
-          message:
-            "Email and password are required.",
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required.",
         });
       }
 
-      const [rows] =
-        await db.query<any[]>(
+      const [viewerRows]: any = await db.query(
+        `
+        SELECT
+          id,
+          role,
+          barangay_id
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+        `,
+        [userId],
+      );
+
+      const viewer = viewerRows[0];
+
+      if (!viewer) {
+        return res.status(401).json({
+          success: false,
+          message: "Administrator account was not found.",
+        });
+      }
+
+      const isSuperAdmin = viewer.role === "super_admin";
+      const barangayId = parsePositiveInteger(viewer.barangay_id);
+
+      if (!isSuperAdmin && !barangayId) {
+        return res.status(400).json({
+          success: false,
+          message: "The Barangay Captain account has no assigned barangay.",
+        });
+      }
+
+      const userFilter = isSuperAdmin
+        ? ""
+        : "WHERE u.barangay_id = ?";
+
+      const complaintFilter = isSuperAdmin
+        ? ""
+        : "WHERE p.barangay_id = ?";
+
+      const inspectionFilter = isSuperAdmin
+        ? ""
+        : "WHERE p.barangay_id = ?";
+
+      const requestFilter = isSuperAdmin
+        ? ""
+        : "WHERE p.barangay_id = ?";
+
+      const scopedParams = isSuperAdmin ? [] : [barangayId];
+
+      const results = await Promise.allSettled([
+        db.query(
           `
           SELECT
-            u.id,
-            u.barangay_id,
-            u.purok_id,
-            u.full_name,
-            u.email,
-            u.password_hash,
-            u.role,
-            u.phone,
-            u.address,
+            CONCAT('user-', u.id) AS activity_id,
+            'user' AS activity_type,
+            u.id AS reference_id,
+            u.full_name AS title,
+            CONCAT(
+              CASE
+                WHEN u.role = 'admin' THEN 'Barangay Captain'
+                WHEN u.role = 'purok_leader' THEN 'Purok Leader'
+                WHEN u.role = 'collector' THEN 'Garbage Collector'
+                WHEN u.role = 'super_admin' THEN 'Municipal Administrator'
+                ELSE 'Resident'
+              END,
+              ' account registered'
+            ) AS description,
             u.status,
-            u.must_change_password,
             b.name AS barangay_name,
-            p.name AS purok_name
+            p.name AS purok_name,
+            u.created_at AS activity_date
           FROM users u
           LEFT JOIN barangays b
             ON b.id = u.barangay_id
           LEFT JOIN puroks p
             ON p.id = u.purok_id
-          WHERE u.email = ?
-          LIMIT 1
+          ${userFilter}
+          ORDER BY u.created_at DESC, u.id DESC
+          LIMIT 8
           `,
-          [email],
-        );
+          scopedParams,
+        ),
 
-      const user = rows[0];
-
-      if (
-        !user ||
-        !(await bcrypt.compare(
-          password,
-          user.password_hash,
-        ))
-      ) {
-        return res.status(401).json({
-          message:
-            "Incorrect email or password.",
-        });
-      }
-
-      if (user.status === "pending") {
-        return res.status(403).json({
-          message:
-            "Your account is waiting for Barangay Captain approval.",
-        });
-      }
-
-      if (user.status !== "active") {
-        return res.status(403).json({
-          message:
-            "This account is inactive. Please contact the Barangay Captain.",
-        });
-      }
-
-      const token =
-        createToken(user);
-
-      delete user.password_hash;
-
-      return res.json({
-        message:
-          "Login successful.",
-        token,
-        user,
-        mustChangePassword:
-          Number(user.must_change_password) === 1,
-      });
-    } catch (error) {
-      console.error(
-        "Login error:",
-        error,
-      );
-
-      return res.status(500).json({
-        message:
-          "Unable to login. Check the database connection.",
-      });
-    }
-  },
-);
-
-/**
- * PUBLIC REGISTRATION
- *
- * Every new public account is automatically a Civilian:
- * role = resident
- *
- * The real barangay_id is taken from the selected purok.
- */
-router.post(
-  "/register",
-  async (req, res) => {
-    try {
-      const fullName = String(
-        req.body.fullName || "",
-      ).trim();
-
-      const email = String(
-        req.body.email || "",
-      )
-        .trim()
-        .toLowerCase();
-
-      const password = String(
-        req.body.password || "",
-      );
-
-      const phone = String(
-        req.body.phone || "",
-      ).trim();
-
-      const address = String(
-        req.body.address || "",
-      ).trim();
-
-      const purokId = Number(
-        req.body.purokId,
-      );
-
-      if (
-        !fullName ||
-        !email ||
-        password.length < 8
-      ) {
-        return res.status(400).json({
-          message:
-            "Full name, valid email, and password of at least 8 characters are required.",
-        });
-      }
-
-      if (!phone || !address) {
-        return res.status(400).json({
-          message:
-            "Phone number and complete address are required.",
-        });
-      }
-
-      if (
-        !Number.isInteger(purokId) ||
-        purokId <= 0
-      ) {
-        return res.status(400).json({
-          message:
-            "Please select a valid barangay and purok.",
-        });
-      }
-
-      const [purokRows] =
-        await db.query<any[]>(
+        db.query(
           `
           SELECT
-            p.id,
-            p.barangay_id,
+            CONCAT('complaint-', c.id) AS activity_id,
+            'complaint' AS activity_type,
+            c.id AS reference_id,
+            c.complaint_type AS title,
+            CONCAT(
+              'Complaint submitted by ',
+              COALESCE(reporter.full_name, 'Resident')
+            ) AS description,
+            c.status,
+            b.name AS barangay_name,
             p.name AS purok_name,
-            b.name AS barangay_name
-          FROM puroks p
-          INNER JOIN barangays b
+            c.created_at AS activity_date
+          FROM complaints c
+          LEFT JOIN users reporter
+            ON reporter.id = c.reported_by
+          LEFT JOIN puroks p
+            ON p.id = c.purok_id
+          LEFT JOIN barangays b
             ON b.id = p.barangay_id
-          WHERE p.id = ?
-            AND b.is_active = 1
-          LIMIT 1
+          ${complaintFilter}
+          ORDER BY c.created_at DESC, c.id DESC
+          LIMIT 8
           `,
-          [purokId],
-        );
+          scopedParams,
+        ),
 
-      const selectedPurok =
-        purokRows[0];
-
-      if (!selectedPurok) {
-        return res.status(404).json({
-          message:
-            "The selected barangay or purok was not found.",
-        });
-      }
-
-      const passwordHash =
-        await bcrypt.hash(
-          password,
-          12,
-        );
-
-      const [result] =
-        await db.execute<any>(
-          `
-          INSERT INTO users
-          (
-            barangay_id,
-            purok_id,
-            full_name,
-            email,
-            password_hash,
-            role,
-            phone,
-            address,
-            status
-          )
-          VALUES
-          (
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            'resident',
-            ?,
-            ?,
-            'active'
-          )
-          `,
-          [
-            selectedPurok.barangay_id,
-            selectedPurok.id,
-            fullName,
-            email,
-            passwordHash,
-            phone,
-            address,
-          ],
-        );
-
-      return res.status(201).json({
-        message:
-          "Civilian account registered successfully.",
-        userId: result.insertId,
-        assignment: {
-          barangay_id:
-            selectedPurok.barangay_id,
-          barangay_name:
-            selectedPurok.barangay_name,
-          purok_id:
-            selectedPurok.id,
-          purok_name:
-            selectedPurok.purok_name,
-        },
-      });
-    } catch (error: any) {
-      if (
-        error?.code ===
-        "ER_DUP_ENTRY"
-      ) {
-        return res.status(409).json({
-          message:
-            "Email is already registered.",
-        });
-      }
-
-      console.error(
-        "Registration error:",
-        error,
-      );
-
-      return res.status(500).json({
-        message:
-          "Unable to register user.",
-      });
-    }
-  },
-);
-
-router.post(
-  "/google",
-  async (req, res) => {
-    try {
-      const credential = String(
-        req.body.credential || "",
-      ).trim();
-
-      const googleClientId =
-        process.env.GOOGLE_CLIENT_ID;
-
-      if (!googleClientId) {
-        return res.status(500).json({
-          message:
-            "Google login is not configured on the server.",
-        });
-      }
-
-      if (!credential) {
-        return res.status(400).json({
-          message:
-            "Google credential is required.",
-        });
-      }
-
-      const ticket =
-        await googleClient.verifyIdToken(
-          {
-            idToken: credential,
-            audience:
-              googleClientId,
-          },
-        );
-
-      const payload =
-        ticket.getPayload();
-
-      if (
-        !payload?.email ||
-        !payload.email_verified
-      ) {
-        return res.status(401).json({
-          message:
-            "Google account email could not be verified.",
-        });
-      }
-
-      const email =
-        payload.email
-          .trim()
-          .toLowerCase();
-
-      const fullName =
-        String(
-          payload.name || "",
-        ).trim() ||
-        String(
-          payload.given_name || "",
-        ).trim() ||
-        email.split("@")[0];
-
-      const [existingRows] =
-        await db.query<any[]>(
+        db.query(
           `
           SELECT
-            u.id,
-            u.barangay_id,
-            u.purok_id,
-            u.full_name,
-            u.email,
-            u.role,
-            u.status,
-            u.phone,
-            u.address,
-            u.must_change_password,
-            u.created_at,
+            CONCAT('inspection-', bi.id) AS activity_id,
+            'inspection' AS activity_type,
+            bi.id AS reference_id,
+            CONCAT('Bin inspection #', bi.id) AS title,
+            CONCAT(
+              'Inspection recorded with status ',
+              REPLACE(bi.status, '_', ' ')
+            ) AS description,
+            bi.status,
             b.name AS barangay_name,
-            p.name AS purok_name
-          FROM users u
-          LEFT JOIN barangays b
-            ON b.id = u.barangay_id
+            p.name AS purok_name,
+            bi.created_at AS activity_date
+          FROM bin_inspections bi
+          LEFT JOIN garbage_bins gb
+            ON gb.id = bi.bin_id
           LEFT JOIN puroks p
-            ON p.id = u.purok_id
-          WHERE u.email = ?
-          LIMIT 1
+            ON p.id = gb.purok_id
+          LEFT JOIN barangays b
+            ON b.id = p.barangay_id
+          ${inspectionFilter}
+          ORDER BY bi.created_at DESC, bi.id DESC
+          LIMIT 8
           `,
-          [email],
-        );
+          scopedParams,
+        ),
 
-      let user =
-        existingRows[0];
+        db.query(
+          `
+          SELECT
+            CONCAT('collection-', cr.id) AS activity_id,
+            'collection' AS activity_type,
+            cr.id AS reference_id,
+            CONCAT('Collection request #', cr.id) AS title,
+            CONCAT(
+              'Collection request marked ',
+              REPLACE(cr.status, '_', ' ')
+            ) AS description,
+            cr.status,
+            b.name AS barangay_name,
+            p.name AS purok_name,
+            cr.requested_at AS activity_date
+          FROM collection_requests cr
+          LEFT JOIN garbage_bins gb
+            ON gb.id = cr.bin_id
+          LEFT JOIN puroks p
+            ON p.id = gb.purok_id
+          LEFT JOIN barangays b
+            ON b.id = p.barangay_id
+          ${requestFilter}
+          ORDER BY cr.requested_at DESC, cr.id DESC
+          LIMIT 8
+          `,
+          scopedParams,
+        ),
+      ]);
 
-      if (user) {
-        if (
-          user.status !== "active"
-        ) {
-          return res
-            .status(403)
-            .json({
-              message:
-                "This account is currently inactive. Please contact the Barangay Captain.",
-            });
-        }
-      } else {
-        /*
-         * Google-created Civilian accounts have no location yet.
-         * The frontend should ask the user to complete barangay,
-         * purok, phone, and address before using location-based features.
-         */
-        const randomPassword =
-          crypto
-            .randomBytes(32)
-            .toString("hex");
+      const activities: any[] = [];
+      const unavailableSources: string[] = [];
+      const sourceNames = [
+        "users",
+        "complaints",
+        "inspections",
+        "collection requests",
+      ];
 
-        const passwordHash =
-          await bcrypt.hash(
-            randomPassword,
-            12,
-          );
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          const rows: any = result.value[0];
 
-        try {
-          const [insertResult] =
-            await db.execute<any>(
-              `
-              INSERT INTO users
-              (
-                barangay_id,
-                purok_id,
-                full_name,
-                email,
-                password_hash,
-                role,
-                status
-              )
-              VALUES
-              (
-                NULL,
-                NULL,
-                ?,
-                ?,
-                ?,
-                'resident',
-                'active'
-              )
-              `,
-              [
-                fullName,
-                email,
-                passwordHash,
-              ],
-            );
-
-          const [newRows] =
-            await db.query<any[]>(
-              `
-              SELECT
-                id,
-                barangay_id,
-                purok_id,
-                full_name,
-                email,
-                role,
-                status,
-                phone,
-                address,
-                must_change_password,
-                created_at
-              FROM users
-              WHERE id = ?
-              LIMIT 1
-              `,
-              [
-                insertResult.insertId,
-              ],
-            );
-
-          user = newRows[0];
-        } catch (
-          insertError: any
-        ) {
-          if (
-            insertError?.code !==
-            "ER_DUP_ENTRY"
-          ) {
-            throw insertError;
+          if (Array.isArray(rows)) {
+            activities.push(...rows);
           }
-
-          const [duplicateRows] =
-            await db.query<any[]>(
-              `
-              SELECT
-                id,
-                barangay_id,
-                purok_id,
-                full_name,
-                email,
-                role,
-                status,
-                phone,
-                address,
-                must_change_password,
-                created_at
-              FROM users
-              WHERE email = ?
-              LIMIT 1
-              `,
-              [email],
-            );
-
-          user =
-            duplicateRows[0];
+        } else {
+          unavailableSources.push(sourceNames[index]);
+          console.error(
+            `Recent activity source failed: ${sourceNames[index]}`,
+            result.reason,
+          );
         }
-      }
-
-      if (!user) {
-        return res.status(500).json({
-          message:
-            "Unable to create or retrieve the Google account.",
-        });
-      }
-
-      const token =
-        createToken(user);
-
-      return res.json({
-        message: existingRows[0]
-          ? "Google login successful."
-          : "Google Civilian account created. Complete your barangay and purok assignment before using location-based features.",
-        token,
-        user,
-        needsLocationSetup:
-          !user.barangay_id ||
-          !user.purok_id,
-        mustChangePassword:
-          Number(user.must_change_password) === 1,
       });
-    } catch (error: any) {
-      console.error(
-        "Google login error:",
-        error,
-      );
 
-      if (
-        error?.message?.includes(
-          "Wrong recipient",
-        ) ||
-        error?.message?.includes(
-          "Invalid token signature",
-        ) ||
-        error?.message?.includes(
-          "Token used too late",
-        )
-      ) {
-        return res.status(401).json({
-          message:
-            "Invalid or expired Google credential.",
-        });
-      }
-
-      return res.status(500).json({
-        message:
-          "Unable to complete Google login.",
+      activities.sort((first, second) => {
+        const firstTime = new Date(first.activity_date || 0).getTime();
+        const secondTime = new Date(second.activity_date || 0).getTime();
+        return secondTime - firstTime;
       });
-    }
-  },
-);
-
-router.get(
-  "/me",
-  requireAuth,
-  async (
-    req: AuthRequest,
-    res,
-  ) => {
-    try {
-      const [rows] =
-        await db.query<any[]>(
-          `
-          SELECT
-            u.id,
-            u.barangay_id,
-            b.name AS barangay_name,
-            u.purok_id,
-            p.name AS purok_name,
-            u.full_name,
-            u.email,
-            u.role,
-            u.phone,
-            u.address,
-            u.status,
-            u.must_change_password,
-            u.created_at
-          FROM users u
-          LEFT JOIN barangays b
-            ON b.id = u.barangay_id
-          LEFT JOIN puroks p
-            ON p.id = u.purok_id
-          WHERE u.id = ?
-          LIMIT 1
-          `,
-          [req.user!.id],
-        );
-
-      if (!rows[0]) {
-        return res.status(404).json({
-          message:
-            "User not found.",
-        });
-      }
 
       return res.json({
         success: true,
-        user: rows[0],
+        scope: isSuperAdmin ? "municipality" : "barangay",
+        barangayId: isSuperAdmin ? null : barangayId,
+        activities: activities.slice(0, 12),
+        unavailableSources,
       });
     } catch (error) {
-      console.error(
-        "Profile error:",
-        error,
-      );
+      console.error("Admin recent activities error:", error);
 
       return res.status(500).json({
-        message:
-          "Unable to load user profile.",
+        success: false,
+        message: "Unable to load recent activities.",
       });
     }
   },
 );
 
-router.put(
-  "/update-profile",
-  requireAuth,
-  async (
-    req: AuthRequest,
-    res,
-  ) => {
-    try {
-      const fullName = String(
-        req.body.fullName || "",
-      ).trim();
+router.get("/users", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    if (!requireBarangayCaptain(req, res)) return;
 
-      const phone = String(
-        req.body.phone || "",
-      ).trim();
+    const [rows]: any = await db.query(`
+      SELECT
+        u.id,
+        u.full_name,
+        u.email,
+        u.phone,
+        u.address,
+        u.role,
+        u.status,
+        u.barangay_id,
+        b.name AS barangay_name,
+        u.purok_id,
+        p.name AS purok_name,
+        u.created_at
+      FROM users u
+      LEFT JOIN barangays b ON b.id = u.barangay_id
+      LEFT JOIN puroks p ON p.id = u.purok_id
+      ORDER BY
+        FIELD(u.role, 'admin', 'purok_leader', 'collector', 'resident'),
+        u.full_name ASC
+    `);
 
-      const submittedAddress =
-        String(
-          req.body.address || "",
-        ).trim();
+    return res.json({ success: true, users: rows });
+  } catch (error) {
+    console.error("Admin load users error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to load users.",
+    });
+  }
+});
 
-      if (!fullName) {
+router.get("/locations", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    if (!requireBarangayCaptain(req, res)) return;
+
+    const [barangays]: any = await db.query(`
+      SELECT id, name
+      FROM barangays
+      WHERE is_active = 1
+      ORDER BY name ASC
+    `);
+
+    const [puroks]: any = await db.query(`
+      SELECT
+        p.id,
+        p.barangay_id,
+        p.name,
+        b.name AS barangay_name
+      FROM puroks p
+      INNER JOIN barangays b ON b.id = p.barangay_id
+      ORDER BY b.name ASC, p.name ASC
+    `);
+
+    return res.json({ success: true, barangays, puroks });
+  } catch (error) {
+    console.error("Admin load locations error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to load barangays and puroks.",
+    });
+  }
+});
+
+router.get("/collectors", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    if (!requireBarangayCaptain(req, res)) return;
+
+    const [rows]: any = await db.query(`
+      SELECT
+        u.id,
+        u.full_name,
+        u.email,
+        u.phone,
+        u.barangay_id,
+        b.name AS barangay_name,
+        u.status
+      FROM users u
+      LEFT JOIN barangays b ON b.id = u.barangay_id
+      WHERE u.role = 'collector'
+        AND u.status = 'active'
+      ORDER BY u.full_name ASC
+    `);
+
+    return res.json({ success: true, collectors: rows });
+  } catch (error) {
+    console.error("Admin load collectors error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to load garbage collectors.",
+    });
+  }
+});
+
+router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
+  const connection = await db.getConnection();
+
+  try {
+    if (!requireBarangayCaptain(req, res)) return;
+
+    const userId = parsePositiveInteger(req.params.id);
+    const role = normalizeRole(req.body.role);
+    const barangayId = parsePositiveInteger(
+      req.body.barangayId ?? req.body.barangay_id,
+    );
+    const purokId = parsePositiveInteger(
+      req.body.purokId ?? req.body.purok_id,
+    );
+
+    if (!userId || !role) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid user and role are required.",
+      });
+    }
+
+    if (Number(req.user?.id) === userId) {
+      return res.status(400).json({
+        success: false,
+        message: "Administrators cannot change their own role.",
+      });
+    }
+
+    await connection.beginTransaction();
+
+    const [userRows]: any = await connection.query(
+      `SELECT id, full_name, role, status FROM users WHERE id = ? LIMIT 1`,
+      [userId],
+    );
+
+    const user = userRows[0];
+
+    if (!user) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, message: "User was not found." });
+    }
+
+   if (
+  user.role === "admin" ||
+  user.role === "super_admin"
+) {
+      await connection.rollback();
+      return res.status(403).json({
+        success: false,
+        message: "Protected administrator accounts cannot be modified here.",
+      });
+    }
+
+    let finalBarangayId: number | null = barangayId;
+    let finalPurokId: number | null = purokId;
+
+    if (role === "collector") {
+      if (!barangayId) {
+        await connection.rollback();
         return res.status(400).json({
-          message:
-            "Full name is required.",
+          success: false,
+          message: "Select an assigned barangay for the garbage collector.",
+        });
+      }
+      finalPurokId = null;
+    }
+
+    if (role === "purok_leader" || role === "resident") {
+      if (!purokId) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Select a valid purok for this account.",
         });
       }
 
-      const [currentRows] =
-        await db.query<any[]>(
-          `
-          SELECT
-            role,
-            address
-          FROM users
-          WHERE id = ?
-          LIMIT 1
-          `,
-          [req.user!.id],
-        );
+      const [purokRows]: any = await connection.query(
+        `SELECT id, barangay_id FROM puroks WHERE id = ? LIMIT 1`,
+        [purokId],
+      );
 
-      const currentUser =
-        currentRows[0];
+      const purok = purokRows[0];
 
-      if (!currentUser) {
+      if (!purok) {
+        await connection.rollback();
         return res.status(404).json({
-          message:
-            "User not found.",
+          success: false,
+          message: "The selected purok was not found.",
         });
       }
 
-      /*
-       * Civilian location/address is locked after registration.
-       * It should be changed through an approved correction request.
-       */
-      const finalAddress =
-        currentUser.role ===
-        "resident"
-          ? currentUser.address
-          : submittedAddress ||
-            currentUser.address;
-
-      await db.execute(
-        `
-        UPDATE users
-        SET
-          full_name = ?,
-          phone = ?,
-          address = ?
-        WHERE id = ?
-        `,
-        [
-          fullName,
-          phone || null,
-          finalAddress || null,
-          req.user!.id,
-        ],
-      );
-
-      const [rows] =
-        await db.query<any[]>(
-          `
-          SELECT
-            u.id,
-            u.barangay_id,
-            b.name AS barangay_name,
-            u.purok_id,
-            p.name AS purok_name,
-            u.full_name,
-            u.email,
-            u.role,
-            u.phone,
-            u.address,
-            u.status,
-            u.created_at
-          FROM users u
-          LEFT JOIN barangays b
-            ON b.id = u.barangay_id
-          LEFT JOIN puroks p
-            ON p.id = u.purok_id
-          WHERE u.id = ?
-          LIMIT 1
-          `,
-          [req.user!.id],
-        );
-
-      return res.json({
-        message:
-          "Profile updated successfully.",
-        user: rows[0],
-      });
-    } catch (error) {
-      console.error(
-        "Update profile error:",
-        error,
-      );
-
-      return res.status(500).json({
-        message:
-          "Unable to update profile.",
-      });
+      finalBarangayId = Number(purok.barangay_id);
+      finalPurokId = Number(purok.id);
     }
-  },
-);
 
-router.post(
-  "/change-initial-password",
-  requireAuth,
-  async (
-    req: AuthRequest,
-    res,
-  ) => {
-    try {
-      const currentPassword = String(
-        req.body.currentPassword ||
-          req.body.temporaryPassword ||
-          "",
+    if (finalBarangayId) {
+      const [barangayRows]: any = await connection.query(
+        `SELECT id FROM barangays WHERE id = ? AND is_active = 1 LIMIT 1`,
+        [finalBarangayId],
       );
 
-      const newPassword = String(
-        req.body.newPassword || "",
-      );
-
-      const confirmPassword = String(
-        req.body.confirmPassword ||
-          req.body.passwordConfirmation ||
-          "",
-      );
-
-      if (!currentPassword) {
-        return res.status(400).json({
-          message:
-            "The temporary password is required.",
-        });
-      }
-
-      if (newPassword.length < 8) {
-        return res.status(400).json({
-          message:
-            "The new password must contain at least 8 characters.",
-        });
-      }
-
-      if (
-        confirmPassword &&
-        newPassword !== confirmPassword
-      ) {
-        return res.status(400).json({
-          message:
-            "The new passwords do not match.",
-        });
-      }
-
-      if (
-        currentPassword === newPassword
-      ) {
-        return res.status(400).json({
-          message:
-            "Choose a password different from the temporary password.",
-        });
-      }
-
-      const [rows] =
-        await db.query<any[]>(
-          `
-          SELECT
-            id,
-            password_hash,
-            must_change_password,
-            status
-          FROM users
-          WHERE id = ?
-          LIMIT 1
-          `,
-          [req.user!.id],
-        );
-
-      const user = rows[0];
-
-      if (!user) {
+      if (!barangayRows[0]) {
+        await connection.rollback();
         return res.status(404).json({
-          message:
-            "User account was not found.",
+          success: false,
+          message: "The selected barangay was not found or is inactive.",
         });
       }
+    }
 
-      if (user.status !== "active") {
-        return res.status(403).json({
-          message:
-            "This account is inactive.",
-        });
-      }
+    await connection.execute(
+      `UPDATE users
+       SET role = ?, barangay_id = ?, purok_id = ?, status = 'active'
+       WHERE id = ?`,
+      [role, finalBarangayId, finalPurokId, userId],
+    );
 
-      if (
-        Number(
-          user.must_change_password,
-        ) !== 1
-      ) {
-        return res.status(409).json({
-          message:
-            "This account no longer requires an initial password change.",
-        });
-      }
+    await connection.commit();
 
-      const passwordMatches =
-        await bcrypt.compare(
-          currentPassword,
-          user.password_hash,
-        );
+    const roleLabel =
+      role === "purok_leader"
+        ? "Purok Leader"
+        : role === "collector"
+          ? "Garbage Collector"
+          : "Civilian";
 
-      if (!passwordMatches) {
-        return res.status(401).json({
-          message:
-            "The temporary password is incorrect.",
-        });
-      }
+    return res.json({
+      success: true,
+      message: `${user.full_name} is now assigned as ${roleLabel}.`,
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error("Admin update role error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to update the user's role.",
+    });
+  } finally {
+    connection.release();
+  }
+});
 
-      const passwordHash =
-        await bcrypt.hash(
-          newPassword,
-          12,
-        );
+router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    if (!requireBarangayCaptain(req, res)) return;
 
-      await db.execute(
-        `
-        UPDATE users
-        SET
-          password_hash = ?,
-          must_change_password = 0
-        WHERE id = ?
-        `,
-        [
-          passwordHash,
-          req.user!.id,
-        ],
-      );
+    const userId = parsePositiveInteger(req.params.id);
+    const status = String(req.body.status || "").trim().toLowerCase();
 
-      return res.json({
-        success: true,
-        message:
-          "Password changed successfully. You can now continue to your dashboard.",
-        mustChangePassword: false,
-      });
-    } catch (error) {
-      console.error(
-        "Initial password change error:",
-        error,
-      );
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "Invalid user ID." });
+    }
 
-      return res.status(500).json({
-        message:
-          "Unable to change the temporary password.",
+    if (status !== "active" && status !== "inactive") {
+      return res.status(400).json({
+        success: false,
+        message: "Status must be active or inactive.",
       });
     }
-  },
-);
 
-router.post(
-  "/forgot-password",
-  async (req, res) => {
-    try {
-      const email = String(
-        req.body.email || "",
-      )
-        .trim()
-        .toLowerCase();
-
-      if (!email) {
-        return res.status(400).json({
-          message:
-            "Email is required.",
-        });
-      }
-
-      const [rows] =
-        await db.query<any[]>(
-          `
-          SELECT
-            id,
-            full_name,
-            email
-          FROM users
-          WHERE email = ?
-          LIMIT 1
-          `,
-          [email],
-        );
-
-      const user = rows[0];
-
-      if (!user) {
-        return res.status(404).json({
-          message:
-            "No account was found using that email.",
-        });
-      }
-
-      const otp = String(
-        crypto.randomInt(
-          100000,
-          1000000,
-        ),
-      );
-
-      const expiresAt =
-        new Date(
-          Date.now() +
-            10 * 60 * 1000,
-        );
-
-      await db.execute(
-        `
-        DELETE FROM password_resets
-        WHERE email = ?
-        `,
-        [email],
-      );
-
-      await db.execute(
-        `
-        INSERT INTO password_resets
-        (
-          email,
-          otp,
-          expires_at
-        )
-        VALUES (?, ?, ?)
-        `,
-        [
-          email,
-          otp,
-          expiresAt,
-        ],
-      );
-
-      const recipientEmail =
-        email
-          .trim()
-          .toLowerCase();
-
-      console.log(
-        "Sending OTP to:",
-        JSON.stringify(
-          recipientEmail,
-        ),
-      );
-
-      const { error } =
-        await resend.emails.send(
-          {
-            from:
-              "Smart Garbage <onboarding@resend.dev>",
-            to: recipientEmail,
-            subject:
-              "Smart Garbage Password Reset OTP",
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 520px; margin: auto;">
-                <h2>Smart Garbage Password Reset</h2>
-                <p>Hello ${user.full_name},</p>
-                <p>Your 6-digit password reset OTP is:</p>
-                <div style="font-size: 32px; font-weight: bold; letter-spacing: 8px;">
-                  ${otp}
-                </div>
-                <p>This OTP will expire after 10 minutes.</p>
-                <p>If you did not request this reset, ignore this email.</p>
-              </div>
-            `,
-          },
-        );
-
-      if (error) {
-        console.error(
-          "Resend email error:",
-          error,
-        );
-
-        await db.execute(
-          `
-          DELETE FROM password_resets
-          WHERE email = ?
-          `,
-          [email],
-        );
-
-        return res.status(500).json({
-          message:
-            "Unable to send the OTP email.",
-        });
-      }
-
-      return res.json({
-        message:
-          "OTP sent successfully. Check your email.",
-      });
-    } catch (error) {
-      console.error(
-        "Forgot password error:",
-        error,
-      );
-
-      return res.status(500).json({
-        message:
-          "Unable to process the password reset request.",
+    if (Number(req.user?.id) === userId) {
+      return res.status(400).json({
+        success: false,
+        message: "Administrators cannot deactivate their own account.",
       });
     }
-  },
-);
 
-router.post(
-  "/verify-otp",
-  async (req, res) => {
-    try {
-      const email = String(
-        req.body.email || "",
-      )
-        .trim()
-        .toLowerCase();
+    const [result]: any = await db.execute(
+      `UPDATE users
+       SET status = ?
+       WHERE id = ?
+         AND role NOT IN ('admin', 'super_admin')`,
+      [status, userId],
+    );
 
-      const otp = String(
-        req.body.otp || "",
-      ).trim();
-
-      if (
-        !email ||
-        !/^\d{6}$/.test(otp)
-      ) {
-        return res.status(400).json({
-          message:
-            "A valid email and 6-digit OTP are required.",
-        });
-      }
-
-      const [rows] =
-        await db.query<any[]>(
-          `
-          SELECT
-            id,
-            email,
-            otp,
-            expires_at
-          FROM password_resets
-          WHERE email = ?
-            AND otp = ?
-          ORDER BY id DESC
-          LIMIT 1
-          `,
-          [email, otp],
-        );
-
-      const resetRequest =
-        rows[0];
-
-      if (!resetRequest) {
-        return res.status(400).json({
-          message:
-            "Incorrect OTP.",
-        });
-      }
-
-      if (
-        new Date(
-          resetRequest.expires_at,
-        ).getTime() <= Date.now()
-      ) {
-        await db.execute(
-          `
-          DELETE FROM password_resets
-          WHERE email = ?
-          `,
-          [email],
-        );
-
-        return res.status(400).json({
-          message:
-            "The OTP has expired. Request a new one.",
-        });
-      }
-
-      return res.json({
-        message:
-          "OTP verified successfully.",
-      });
-    } catch (error) {
-      console.error(
-        "Verify OTP error:",
-        error,
-      );
-
-      return res.status(500).json({
-        message:
-          "Unable to verify the OTP.",
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User was not found or cannot be updated.",
       });
     }
-  },
-);
 
-router.post(
-  "/reset-password",
-  async (req, res) => {
-    try {
-      const email = String(
-        req.body.email || "",
-      )
-        .trim()
-        .toLowerCase();
+    return res.json({
+      success: true,
+      message:
+        status === "active"
+          ? "Account activated successfully."
+          : "Account deactivated successfully.",
+    });
+  } catch (error) {
+    console.error("Admin update account status error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to update account status.",
+    });
+  }
+});
 
-      const otp = String(
-        req.body.otp || "",
-      ).trim();
 
-      const newPassword =
-        String(
-          req.body.newPassword ||
-            "",
-        );
-
-      if (
-        !email ||
-        !/^\d{6}$/.test(otp)
-      ) {
-        return res.status(400).json({
-          message:
-            "A valid email and 6-digit OTP are required.",
-        });
-      }
-
-      if (
-        newPassword.length < 8
-      ) {
-        return res.status(400).json({
-          message:
-            "The new password must contain at least 8 characters.",
-        });
-      }
-
-      const [resetRows] =
-        await db.query<any[]>(
-          `
-          SELECT
-            id,
-            expires_at
-          FROM password_resets
-          WHERE email = ?
-            AND otp = ?
-          ORDER BY id DESC
-          LIMIT 1
-          `,
-          [email, otp],
-        );
-
-      const resetRequest =
-        resetRows[0];
-
-      if (!resetRequest) {
-        return res.status(400).json({
-          message:
-            "Incorrect OTP.",
-        });
-      }
-
-      if (
-        new Date(
-          resetRequest.expires_at,
-        ).getTime() <= Date.now()
-      ) {
-        await db.execute(
-          `
-          DELETE FROM password_resets
-          WHERE email = ?
-          `,
-          [email],
-        );
-
-        return res.status(400).json({
-          message:
-            "The OTP has expired. Request a new one.",
-        });
-      }
-
-      const [userRows] =
-        await db.query<any[]>(
-          `
-          SELECT id
-          FROM users
-          WHERE email = ?
-          LIMIT 1
-          `,
-          [email],
-        );
-
-      if (!userRows[0]) {
-        return res.status(404).json({
-          message:
-            "User account was not found.",
-        });
-      }
-
-      const passwordHash =
-        await bcrypt.hash(
-          newPassword,
-          12,
-        );
-
-      await db.execute(
-        `
-        UPDATE users
-        SET
-          password_hash = ?,
-          must_change_password = 0
-        WHERE email = ?
-        `,
-        [
-          passwordHash,
-          email,
-        ],
-      );
-
-      await db.execute(
-        `
-        DELETE FROM password_resets
-        WHERE email = ?
-        `,
-        [email],
-      );
-
-      return res.json({
-        message:
-          "Password reset successfully. You can now log in.",
-      });
-    } catch (error) {
-      console.error(
-        "Reset password error:",
-        error,
-      );
-
-      return res.status(500).json({
-        message:
-          "Unable to reset the password.",
+router.post("/barangay-captains", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    if (req.user?.role !== "super_admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only the Municipal Administrator can create Barangay Captains.",
       });
     }
-  },
-);
 
-/*
- * These older collector-verification endpoints are kept for compatibility.
- * New public registrations are Civilian accounts, while the Barangay Captain
- * promotes users through /api/admin/users/:id/role.
- */
-router.get(
-  "/admin/pending-collectors",
-  requireAuth,
-  async (
-    req: AuthRequest,
-    res,
-  ) => {
-    try {
-      if (
-        req.user?.role !== "admin"
-      ) {
-        return res.status(403).json({
-          message:
-            "Barangay Captain access is required.",
-        });
-      }
+    const {
+      fullName,
+      email,
+      recoveryEmail,
+      phone,
+      barangayId,
+      password,
+      temporaryPassword,
+    } = req.body;
 
-      const [rows] =
-        await db.query<any[]>(
-          `
-          SELECT
-            id,
-            barangay_id,
-            purok_id,
-            full_name,
-            email,
-            phone,
-            address,
-            status,
-            created_at
-          FROM users
-          WHERE role = 'collector'
-            AND status = 'pending'
-          ORDER BY
-            created_at DESC,
-            id DESC
-          `,
-        );
+    const plainPassword = password || temporaryPassword;
 
-      return res.json({
-        collectors: rows,
-      });
-    } catch (error) {
-      console.error(
-        "Pending collectors error:",
-        error,
-      );
-
-      return res.status(500).json({
-        message:
-          "Unable to load pending collector registrations.",
+    if (!fullName || !email || !barangayId || !plainPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Please complete all required fields.",
       });
     }
-  },
-);
 
-router.patch(
-  "/admin/collectors/:id/verification",
-  requireAuth,
-  async (
-    req: AuthRequest,
-    res,
-  ) => {
-    try {
-      if (
-        req.user?.role !== "admin"
-      ) {
-        return res.status(403).json({
-          message:
-            "Barangay Captain access is required.",
-        });
-      }
+    const [existing]: any = await db.query(
+      "SELECT id FROM users WHERE email=? LIMIT 1",
+      [email]
+    );
 
-      const collectorId =
-        Number(req.params.id);
-
-      const action = String(
-        req.body.action || "",
-      )
-        .trim()
-        .toLowerCase();
-
-      if (
-        !Number.isInteger(
-          collectorId,
-        ) ||
-        collectorId <= 0
-      ) {
-        return res.status(400).json({
-          message:
-            "A valid collector ID is required.",
-        });
-      }
-
-      if (
-        action !== "approve" &&
-        action !== "reject"
-      ) {
-        return res.status(400).json({
-          message:
-            "Action must be approve or reject.",
-        });
-      }
-
-      const [rows] =
-        await db.query<any[]>(
-          `
-          SELECT
-            id,
-            full_name,
-            email,
-            role,
-            status
-          FROM users
-          WHERE id = ?
-            AND role = 'collector'
-          LIMIT 1
-          `,
-          [collectorId],
-        );
-
-      const collector =
-        rows[0];
-
-      if (!collector) {
-        return res.status(404).json({
-          message:
-            "Collector account was not found.",
-        });
-      }
-
-      if (
-        collector.status !==
-        "pending"
-      ) {
-        return res.status(409).json({
-          message:
-            "This collector account has already been reviewed.",
-        });
-      }
-
-      const nextStatus =
-        action === "approve"
-          ? "active"
-          : "inactive";
-
-      await db.execute(
-        `
-        UPDATE users
-        SET status = ?
-        WHERE id = ?
-          AND role = 'collector'
-        `,
-        [
-          nextStatus,
-          collectorId,
-        ],
-      );
-
-      return res.json({
-        message:
-          action === "approve"
-            ? "Garbage Collector account approved successfully."
-            : "Garbage Collector account rejected successfully.",
-        collector: {
-          ...collector,
-          status: nextStatus,
-        },
-      });
-    } catch (error) {
-      console.error(
-        "Collector verification error:",
-        error,
-      );
-
-      return res.status(500).json({
-        message:
-          "Unable to review the Garbage Collector account.",
+    if (existing.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Email already exists.",
       });
     }
-  },
-);
+
+    const [captain]: any = await db.query(
+      "SELECT id FROM users WHERE role='admin' AND barangay_id=? LIMIT 1",
+      [barangayId]
+    );
+
+    if (captain.length) {
+      return res.status(400).json({
+        success: false,
+        message: "This barangay already has a Barangay Captain.",
+      });
+    }
+
+    const hash = await bcrypt.hash(plainPassword, 10);
+
+    await db.execute(
+      `INSERT INTO users
+      (full_name,email,phone,password_hash,recovery_email,role,barangay_id,status,must_change_password)
+      VALUES (?,?,?,?,?,'admin',?,'active',1)`,
+      [
+        fullName,
+        email.toLowerCase(),
+        phone || null,
+        hash,
+        recoveryEmail || null,
+        Number(barangayId),
+      ]
+    );
+
+    return res.json({
+      success: true,
+      message: "Barangay Captain account created successfully.",
+    });
+  } catch (error) {
+    console.error("Create Barangay Captain error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to create Barangay Captain.",
+    });
+  }
+});
+
 
 export default router;

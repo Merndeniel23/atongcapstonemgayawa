@@ -26,6 +26,7 @@ import ComplaintsPanel from "./components/ComplaintsPanel";
 import NotificationsPanel from "./components/NotificationsPanel";
 import BinInspections from "./components/BinInspections";
 import ManageGarbageBins from "./components/ManageGarbageBins";
+import ChangeInitialPassword from "./components/ChangeInitialPassword";
 
 import {
   AppStateProvider,
@@ -56,7 +57,8 @@ export type Screen =
   | "profile"
   | "endorsements"
   | "bin-inspections"
-  | "garbage-bins";
+ | "garbage-bins"
+| "change-initial-password";
 
 export default function App() {
   return (
@@ -80,13 +82,16 @@ function AppContent() {
   };
 
   if (!isLoggedIn) {
-    return (
-      <div className="relative flex min-h-screen w-full items-center justify-center overflow-y-auto bg-[#F8FAFC] font-sans text-slate-900">
-        <Registration />
-      </div>
-    );
-  }
+  return (
+    <div className="relative flex min-h-screen w-full items-center justify-center overflow-y-auto bg-[#F8FAFC] font-sans text-slate-900">
+      <Registration />
+    </div>
+  );
+}
 
+if (currentScreen === "change-initial-password") {
+  return <ChangeInitialPassword />;
+}
   return (
     <div className="flex min-h-screen flex-col bg-[#F8FAFC] font-sans text-slate-900 md:flex-row">
       <Sidebar

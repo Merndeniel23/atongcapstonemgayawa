@@ -36,6 +36,16 @@ interface Barangay {
   is_active?: number | boolean;
 }
 
+interface ActivityItem {
+  activity_id:string;
+  activity_type:string;
+  title:string;
+  description:string;
+  barangay_name?:string|null;
+  purok_name?:string|null;
+  activity_date:string;
+}
+
 interface SystemUser {
   id: number;
   full_name: string;
@@ -138,6 +148,10 @@ export default function SuperAdminDashboard({
   const [notice, setNotice] =
     useState("");
 
+  const [activities,setActivities]=useState<ActivityItem[]>([]);
+  const [activityError,setActivityError]=useState("");
+
+
   const loadDashboard = async () => {
     setLoading(true);
     setError("");
@@ -171,11 +185,14 @@ export default function SuperAdminDashboard({
           apiRequest(
             "/auth/registration-locations",
           ),
+          apiRequest("/admin/recent-activities"),
         ]);
 
       const userResult = results[0];
       const locationResult =
         results[1];
+      const activityResult =
+        results[2];
 
       if (
         userResult.status ===
@@ -207,6 +224,13 @@ export default function SuperAdminDashboard({
         );
       } else {
         setBarangays([]);
+      }
+
+      if (activityResult.status==="fulfilled"){
+        setActivities(Array.isArray(activityResult.value.activities)?activityResult.value.activities:[]);
+      }else{
+        setActivities([]);
+        setActivityError("Recent activities unavailable.");
       }
     } catch (err) {
       setError(
@@ -561,6 +585,24 @@ export default function SuperAdminDashboard({
               />
             </div>
           </div>
+
+          
+          <div className="rounded-[2rem] border border-slate-100 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-black text-slate-900">Recent Activity</h2>
+            {activityError && <p className="mt-3 text-xs text-rose-600">{activityError}</p>}
+            <div className="mt-4 space-y-3">
+              {activities.length===0 ? (
+                <p className="text-xs text-slate-500">No recent activity.</p>
+              ) : activities.slice(0,6).map(a=>(
+                <div key={a.activity_id} className="border-b border-slate-100 pb-2">
+                  <p className="text-sm font-bold text-slate-800">{a.title}</p>
+                  <p className="text-[10px] text-slate-500">{a.description}</p>
+                  <p className="text-[10px] text-emerald-700">{a.barangay_name||""} {a.purok_name||""}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
 
           <div className="rounded-[2rem] border border-amber-200 bg-amber-50 p-6">
             <div className="flex items-center gap-3">
