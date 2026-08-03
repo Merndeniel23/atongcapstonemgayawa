@@ -27,6 +27,7 @@ import NotificationsPanel from "./components/NotificationsPanel";
 import BinInspections from "./components/BinInspections";
 import ManageGarbageBins from "./components/ManageGarbageBins";
 import ChangeInitialPassword from "./components/ChangeInitialPassword";
+import Reports from "./components/Reports";
 
 import {
   AppStateProvider,
@@ -58,7 +59,8 @@ export type Screen =
   | "endorsements"
   | "bin-inspections"
  | "garbage-bins"
-| "change-initial-password";
+| "change-initial-password"
+  | "reports";
 
 export default function App() {
   return (
@@ -157,6 +159,7 @@ if (currentScreen === "change-initial-password") {
                 <NotificationsPanel role={userRole as any} />
               )}
               {currentScreen === "profile" && <UserProfilePanel />}
+              {currentScreen === "reports" && <Reports />}
             </motion.div>
           </AnimatePresence>
         </main>

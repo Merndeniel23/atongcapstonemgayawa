@@ -425,6 +425,219 @@ router.get(
   },
 );
 
+
+router.get(
+  "/reports/summary",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    try {
+      if (!requireBarangayCaptain(req, res)) return;
+
+      const userId = parsePositiveInteger(req.user?.id);
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required.",
+        });
+      }
+
+      const [viewerRows]: any = await db.query(
+        `
+        SELECT
+          id,
+          role,
+          barangay_id
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+        `,
+        [userId],
+      );
+
+      const viewer = viewerRows[0];
+
+      if (!viewer) {
+        return res.status(401).json({
+          success: false,
+          message: "Administrator account was not found.",
+        });
+      }
+
+      const isSuperAdmin = viewer.role === "super_admin";
+      const barangayId = parsePositiveInteger(viewer.barangay_id);
+
+      if (!isSuperAdmin && !barangayId) {
+        return res.status(400).json({
+          success: false,
+          message: "The Barangay Captain account has no assigned barangay.",
+        });
+      }
+
+      const userFilter = isSuperAdmin
+        ? ""
+        : "AND u.barangay_id = ?";
+
+      const complaintFilter = isSuperAdmin
+        ? ""
+        : "AND p.barangay_id = ?";
+
+      const binFilter = isSuperAdmin
+        ? ""
+        : "AND p.barangay_id = ?";
+
+      const userParams = isSuperAdmin ? [] : [barangayId];
+      const complaintParams = isSuperAdmin ? [] : [barangayId];
+      const binParams = isSuperAdmin ? [] : [barangayId];
+
+      const [
+        barangaysResult,
+        captainsResult,
+        leadersResult,
+        collectorsResult,
+        residentsResult,
+        activeUsersResult,
+        pendingComplaintsResult,
+        resolvedComplaintsResult,
+        binsResult,
+      ] = await Promise.all([
+        db.query(
+          isSuperAdmin
+            ? `
+              SELECT COUNT(*) AS total
+              FROM barangays
+              WHERE is_active = 1
+            `
+            : `
+              SELECT COUNT(*) AS total
+              FROM barangays
+              WHERE id = ?
+                AND is_active = 1
+            `,
+          isSuperAdmin ? [] : [barangayId],
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS total
+          FROM users u
+          WHERE u.role = 'admin'
+            ${userFilter}
+          `,
+          userParams,
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS total
+          FROM users u
+          WHERE u.role = 'purok_leader'
+            ${userFilter}
+          `,
+          userParams,
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS total
+          FROM users u
+          WHERE u.role = 'collector'
+            ${userFilter}
+          `,
+          userParams,
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS total
+          FROM users u
+          WHERE u.role = 'resident'
+            ${userFilter}
+          `,
+          userParams,
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS total
+          FROM users u
+          WHERE u.status = 'active'
+            ${userFilter}
+          `,
+          userParams,
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS total
+          FROM complaints c
+          LEFT JOIN puroks p
+            ON p.id = c.purok_id
+          WHERE c.status = 'pending'
+            ${complaintFilter}
+          `,
+          complaintParams,
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS total
+          FROM complaints c
+          LEFT JOIN puroks p
+            ON p.id = c.purok_id
+          WHERE c.status = 'resolved'
+            ${complaintFilter}
+          `,
+          complaintParams,
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS total
+          FROM garbage_bins gb
+          LEFT JOIN puroks p
+            ON p.id = gb.purok_id
+          WHERE 1 = 1
+            ${binFilter}
+          `,
+          binParams,
+        ),
+      ]);
+
+      const barangaysRows: any = barangaysResult[0];
+      const captainsRows: any = captainsResult[0];
+      const leadersRows: any = leadersResult[0];
+      const collectorsRows: any = collectorsResult[0];
+      const residentsRows: any = residentsResult[0];
+      const activeUsersRows: any = activeUsersResult[0];
+      const pendingComplaintsRows: any = pendingComplaintsResult[0];
+      const resolvedComplaintsRows: any = resolvedComplaintsResult[0];
+      const binsRows: any = binsResult[0];
+
+      return res.json({
+        success: true,
+        generatedAt: new Date().toISOString(),
+        scope: isSuperAdmin ? "municipality" : "barangay",
+        barangayId: isSuperAdmin ? null : barangayId,
+        summary: {
+          barangays: Number(barangaysRows[0]?.total || 0),
+          captains: Number(captainsRows[0]?.total || 0),
+          leaders: Number(leadersRows[0]?.total || 0),
+          collectors: Number(collectorsRows[0]?.total || 0),
+          residents: Number(residentsRows[0]?.total || 0),
+          activeUsers: Number(activeUsersRows[0]?.total || 0),
+          pendingComplaints: Number(
+            pendingComplaintsRows[0]?.total || 0,
+          ),
+          resolvedComplaints: Number(
+            resolvedComplaintsRows[0]?.total || 0,
+          ),
+          garbageBins: Number(binsRows[0]?.total || 0),
+        },
+      });
+    } catch (error) {
+      console.error("Admin reports summary error:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Unable to generate the reports summary.",
+      });
+    }
+  },
+);
+
 router.get("/users", requireAuth, async (req: AuthRequest, res) => {
   try {
     if (!requireBarangayCaptain(req, res)) return;

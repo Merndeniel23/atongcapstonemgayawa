@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   CreditCard,
+  FileText,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -235,6 +236,11 @@ export default function Sidebar({
       count: unreadCount,
     },
     {
+      id: "reports",
+      icon: FileText,
+      label: "Reports",
+    },
+    {
       id: "profile",
       icon: Settings,
       label: "Control Center",
@@ -272,6 +278,11 @@ export default function Sidebar({
       icon: Bell,
       label: "Municipal Alerts",
       count: unreadCount,
+    },
+    {
+      id: "reports",
+      icon: FileText,
+      label: "Reports",
     },
     {
       id: "profile",
